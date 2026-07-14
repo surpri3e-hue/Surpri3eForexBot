@@ -1,7 +1,14 @@
 import os
 
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    CallbackQueryHandler,
+    ContextTypes,
+    filters
+)
 
 from market import get_gold_candles
 from ict import ict_analysis
@@ -9,97 +16,234 @@ from signals import create_signal
 from database import save_trade
 from report import create_report
 
+from users import (
+    create_users_table,
+    add_user,
+    update_activity,
+    get_users_count
+)
+
 
 TOKEN = os.getenv("BOT_TOKEN")
+
+ADMIN_ID = 816822644
+
+
+
+# ---------- USER PANEL ----------
+
+def user_keyboard():
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🚨 دریافت سیگنال",
+                callback_data="signal"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📊 وضعیت عملکرد",
+                callback_data="status"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📜 تاریخچه",
+                callback_data="history"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📢 کانال",
+                url="https://t.me/YOUR_CHANNEL"
+            )
+        ]
+
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+
+
+
+# ---------- ADMIN PANEL ----------
+
+def admin_keyboard():
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "👥 Users",
+                callback_data="users"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📊 Report",
+                callback_data="report"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🧪 Test Signal",
+                callback_data="signal"
+            )
+        ]
+
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+
+
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+    user_id = update.effective_user.id
+
+    add_user(user_id)
+    update_activity(user_id)
+
+
     await update.message.reply_text(
-        "🤖 Surpri3e AI Bot Online"
+        """
+🤖 Surpri3e AI Scanner
+
+Welcome
+
+Choose an option:
+""",
+        reply_markup=user_keyboard()
     )
 
 
 
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
-    text = update.message.text.upper()
 
 
-    if text == "STATUS":
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    user_id = update.effective_user.id
+
+
+    if user_id != ADMIN_ID:
 
         await update.message.reply_text(
+            "⛔ Access Denied"
+        )
+
+        return
+
+
+
+    await update.message.reply_text(
+        """
+🤖 ADMIN PANEL
+
+Select:
+""",
+        reply_markup=admin_keyboard()
+    )
+
+
+
+
+
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+
+    await query.answer()
+
+
+    data = query.data
+
+
+
+    if data == "users":
+
+        if query.from_user.id != ADMIN_ID:
+            return
+
+
+        count = get_users_count()
+
+
+        await query.edit_message_text(
+            f"""
+👥 Users
+
+Total:
+{count}
+"""
+        )
+
+
+
+    elif data == "report":
+
+
+        await query.edit_message_text(
             create_report()
         )
 
-        return
 
 
-
-    if not text.startswith("SIGNAL"):
-
-        return
+    elif data == "status":
 
 
-
-    tf = text.replace("SIGNAL ","")
-
-
-    intervals = {
-        "M1":"1min",
-        "M5":"5min",
-        "M15":"15min",
-        "M30":"30min",
-        "H1":"1h",
-        "H4":"4h"
-    }
-
-
-    if tf not in intervals:
-
-        await update.message.reply_text(
-            "❌ Wrong timeframe"
+        await query.edit_message_text(
+            create_report()
         )
 
-        return
 
 
-
-    await update.message.reply_text(
-        "🔍 Analyzing XAUUSD..."
-    )
+    elif data == "signal":
 
 
-
-    df = get_gold_candles(
-        intervals[tf]
-    )
-
-
-    if df is None:
-
-        await update.message.reply_text(
-            "❌ Data Error"
+        await query.edit_message_text(
+            "🔍 Analyzing XAUUSD..."
         )
 
-        return
+
+        df = get_gold_candles("5min")
+
+
+        if df is None:
+
+            await query.message.reply_text(
+                "❌ Data Error"
+            )
+
+            return
 
 
 
-    analysis = ict_analysis(df)
+        analysis = ict_analysis(df)
 
 
-    signal = create_signal(
-        df,
-        analysis
-    )
+        signal = create_signal(
+            df,
+            analysis
+        )
 
 
-    if signal:
+        if signal:
 
-        save_trade(signal)
+            save_trade(signal)
 
-        await update.message.reply_text(
+
+            await query.message.reply_text(
 f"""
 🚨 SIGNAL
 
@@ -118,16 +262,87 @@ TP:
 Score:
 {signal['score']}
 """
+            )
+
+
+        else:
+
+            await query.message.reply_text(
+                "❌ No Setup"
+            )
+
+
+
+
+
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    if update.message:
+
+        update_activity(
+            update.effective_user.id
         )
 
 
-    else:
 
-        await update.message.reply_text(
-            "❌ No Setup"
+    text = update.message.text.upper()
+
+
+
+    if text.startswith("SIGNAL"):
+
+        df = get_gold_candles("5min")
+
+
+        analysis = ict_analysis(df)
+
+
+        signal = create_signal(
+            df,
+            analysis
         )
 
 
+        if signal:
+
+            save_trade(signal)
+
+
+            await update.message.reply_text(
+f"""
+🚨 SIGNAL
+
+Direction:
+{signal['direction']}
+
+Entry:
+{signal['entry']}
+
+SL:
+{signal['sl']}
+
+TP:
+{signal['tp']}
+
+Score:
+{signal['score']}
+"""
+            )
+
+        else:
+
+            await update.message.reply_text(
+                "❌ No Setup"
+            )
+
+
+
+
+
+# ---------- START ----------
+
+
+create_users_table()
 
 
 app = Application.builder().token(TOKEN).build()
@@ -137,6 +352,21 @@ app.add_handler(
     CommandHandler(
         "start",
         start
+    )
+)
+
+
+app.add_handler(
+    CommandHandler(
+        "admin",
+        admin
+    )
+)
+
+
+app.add_handler(
+    CallbackQueryHandler(
+        button
     )
 )
 
