@@ -2,6 +2,7 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 import os
+import asyncio
 
 from market import get_gold_candles
 from ict import ict_analysis
@@ -9,10 +10,10 @@ from signals import create_signal
 from database import save_trade
 from report import create_report
 from chart import create_chart
+from tracker import check_trades
 
 
-TOKEN = os.getenv("BOT_TOKEN")
-
+TOKEN = os.getenv("BOT_KEY")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -36,15 +37,32 @@ Status
 
 
 
+async def tracker_loop():
+
+    while True:
+
+        try:
+
+            check_trades()
+
+        except Exception as e:
+
+            print(
+                "Tracker Error:",
+                e
+            )
+
+
+        await asyncio.sleep(60)
+
+
+
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-
 
     text = update.message.text.upper()
 
 
-
-    # گزارش
 
     if text == "STATUS":
 
@@ -89,11 +107,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
         await update.message.reply_text(
-            "❌ Invalid timeframe"
+            "❌ Timeframe invalid"
         )
 
         return
-
 
 
 
@@ -105,23 +122,8 @@ f"""
 
 XAUUSD {tf}
 
-Analyzing...
-
-🔍 Checking ICT Model
-
-Liquidity
-⏳
-
-FVG
-⏳
-
-Structure
-⏳
-
-Entry
-⏳
+🔍 Checking ICT Model...
 """
-
     )
 
 
@@ -140,7 +142,7 @@ Entry
 """
 ❌ Data Error
 
-Cannot receive XAUUSD data.
+Cannot receive market data.
 """
         )
 
@@ -158,7 +160,6 @@ Cannot receive XAUUSD data.
         df,
         analysis
     )
-
 
 
 
@@ -185,23 +186,30 @@ Cannot receive XAUUSD data.
 
 XAUUSD {tf}
 
+
 Direction:
 {signal['direction']}
+
 
 Entry:
 {signal['entry']}
 
+
 SL:
 {signal['sl']}
+
 
 TP:
 {signal['tp']}
 
+
 RR:
 {signal['rr']}
 
+
 Score:
 {signal['score']}/100
+
 
 Reason:
 
@@ -215,23 +223,18 @@ Reason:
         )
 
 
-
         with open(chart_file,"rb") as photo:
 
 
             await update.message.reply_photo(
-
                 photo=photo,
-
                 caption="📊 ICT Chart"
-
             )
 
 
 
 
     else:
-
 
 
         await loading.edit_text(
@@ -242,10 +245,7 @@ f"""
 XAUUSD {tf}
 
 ICT conditions are not ready.
-
-Wait for next signal.
 """
-
         )
 
 
@@ -253,27 +253,50 @@ Wait for next signal.
 
 
 
-
-app = Application.builder().token(TOKEN).build()
-
+async def main():
 
 
-app.add_handler(
-    CommandHandler(
-        "start",
-        start
+    app = Application.builder().token(TOKEN).build()
+
+
+
+    app.add_handler(
+        CommandHandler(
+            "start",
+            start
+        )
     )
-)
 
 
-
-app.add_handler(
-    MessageHandler(
-        filters.TEXT,
-        handler
+    app.add_handler(
+        MessageHandler(
+            filters.TEXT,
+            handler
+        )
     )
-)
 
 
 
-app.run_polling()
+    asyncio.create_task(
+        tracker_loop()
+    )
+
+
+
+    await app.initialize()
+
+    await app.start()
+
+    await app.updater.start_polling()
+
+
+
+    await asyncio.Event().wait()
+
+
+
+
+
+if __name__ == "__main__":
+
+    asyncio.run(main())
