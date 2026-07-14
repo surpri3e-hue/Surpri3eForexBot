@@ -22,7 +22,7 @@ from database import (
     create_database,
     save_trade,
     update_result,
-    get_user_trades  # تابع جدید
+    get_user_trades
 )
 
 from users import (
@@ -95,9 +95,8 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ تابع ارسال سیگنال (برای جلوگیری از تکرار کد) ============
+# ============ تابع ارسال سیگنال ============
 async def send_signal_message(target, trade_id, signal, df):
-    """ارسال پیام سیگنال به کاربر"""
     message = (
         f"🚨 SIGNAL\n\n"
         f"💰 Gold Price: {df['close'].iloc[-1]}\n\n"
@@ -317,29 +316,33 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ============ اجرای اصلی ============
 def main():
-    # مقداردهی اولیه
-    init_settings()
-    create_database()
-    create_users_table()
-    
-    # ساخت اپلیکیشن
-    app = Application.builder().token(TOKEN).build()
-    
-    # اضافه کردن هندلرها
-    app.add_handler(CommandHandler("start", start))
-    app.add_handler(CommandHandler("admin", admin))
-    app.add_handler(CallbackQueryHandler(button))
-    app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
-    
-    print("🤖 Surpri3e AI Bot Started")
-    
-    # اجرا روی Railway با Webhook
-    port = int(os.environ.get("PORT", 8080))
-    app.run_webhook(
-        listen="0.0.0.0",
-        port=port,
-        webhook_url=f"https://{os.environ.get('RAILWAY_PUBLIC_DOMAIN')}/webhook"
-    )
+    try:
+        # مقداردهی اولیه
+        init_settings()
+        create_database()
+        create_users_table()
+        
+        # ساخت اپلیکیشن
+        app = Application.builder().token(TOKEN).build()
+        
+        # اضافه کردن هندلرها
+        app.add_handler(CommandHandler("start", start))
+        app.add_handler(CommandHandler("admin", admin))
+        app.add_handler(CallbackQueryHandler(button))
+        app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
+        
+        print("🤖 Surpri3e AI Bot Started")
+        
+        # ====== راه‌اندازی روی Railway ======
+        port = int(os.environ.get("PORT", 8080))
+        
+        # استفاده از Polling (ساده‌ترین روش)
+        print(f"🔄 Starting bot with polling on port {port}...")
+        app.run_polling()
+        
+    except Exception as e:
+        print(f"❌ Error: {e}")
+        raise
 
 if __name__ == "__main__":
     main()
