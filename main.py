@@ -23,7 +23,8 @@ from signals import create_signal
 
 from database import (
     create_database,
-    save_trade
+    save_trade,
+    update_result
 )
 
 
@@ -36,8 +37,7 @@ from users import (
 
 
 from settings import (
-    init_settings,
-    get_setting
+    init_settings
 )
 
 
@@ -54,6 +54,7 @@ from admin_tools import (
 
 
 
+
 TOKEN = os.getenv(
     "BOT_TOKEN"
 )
@@ -65,15 +66,13 @@ ADMIN_ID = 816822644
 
 
 
-# ================= MENUS =================
+# ================= KEYBOARDS =================
 
 
 
 def user_keyboard():
 
-
     keyboard = [
-
 
         [
             InlineKeyboardButton(
@@ -81,7 +80,6 @@ def user_keyboard():
                 callback_data="signal"
             )
         ],
-
 
         [
             InlineKeyboardButton(
@@ -93,9 +91,7 @@ def user_keyboard():
                 "📜 تاریخچه",
                 callback_data="history"
             )
-
         ],
-
 
         [
             InlineKeyboardButton(
@@ -104,7 +100,6 @@ def user_keyboard():
             )
         ],
 
-
         [
             InlineKeyboardButton(
                 "⚙️ تنظیمات",
@@ -112,9 +107,7 @@ def user_keyboard():
             )
         ]
 
-
     ]
-
 
     return InlineKeyboardMarkup(
         keyboard
@@ -125,12 +118,9 @@ def user_keyboard():
 
 
 
-
 def admin_keyboard():
 
-
     keyboard = [
-
 
         [
             InlineKeyboardButton(
@@ -138,7 +128,6 @@ def admin_keyboard():
                 callback_data="dashboard"
             )
         ],
-
 
         [
             InlineKeyboardButton(
@@ -150,9 +139,7 @@ def admin_keyboard():
                 "📈 Analytics",
                 callback_data="analytics"
             )
-
         ],
-
 
         [
             InlineKeyboardButton(
@@ -161,14 +148,12 @@ def admin_keyboard():
             )
         ],
 
-
         [
             InlineKeyboardButton(
                 "🔒 Channel Lock",
                 callback_data="channel_lock"
             )
         ],
-
 
         [
             InlineKeyboardButton(
@@ -177,14 +162,12 @@ def admin_keyboard():
             )
         ],
 
-
         [
             InlineKeyboardButton(
                 "📜 Logs",
                 callback_data="logs"
             )
         ],
-
 
         [
             InlineKeyboardButton(
@@ -206,23 +189,52 @@ def admin_keyboard():
 
 
 
+def signal_result_keyboard(trade_id):
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "✅ TP HIT",
+                callback_data=f"tp_{trade_id}"
+            ),
+
+            InlineKeyboardButton(
+                "❌ SL HIT",
+                callback_data=f"sl_{trade_id}"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🚫 CANCEL",
+                callback_data=f"cancel_{trade_id}"
+            )
+        ]
+
+    ]
+
+
+    return InlineKeyboardMarkup(
+        keyboard
+    )
+
+
+
+
+
+
 # ================= START =================
 
 
 
-async def start(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
-
+async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
-
 
     add_user(
         user_id
     )
-
 
     update_activity(
         user_id
@@ -247,21 +259,16 @@ async def start(
 
 
 
-async def admin(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
 
+async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if update.effective_user.id != ADMIN_ID:
-
 
         await update.message.reply_text(
             "⛔ دسترسی ندارید"
         )
 
         return
-
 
 
     await update.message.reply_text(
@@ -274,13 +281,11 @@ async def admin(
 
         reply_markup=admin_keyboard()
 
-    )# ================= BUTTON HANDLER =================
+    )
+    # ================= BUTTON HANDLER =================
 
 
-async def button(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
 
@@ -290,7 +295,76 @@ async def button(
 
 
 
+
+
+    # نتیجه سیگنال
+
+    if data.startswith("tp_"):
+
+        trade_id = data.split("_")[1]
+
+
+        update_result(
+            trade_id,
+            "TP"
+        )
+
+
+        await query.edit_message_text(
+            "✅ TP ثبت شد"
+        )
+
+
+        return
+
+
+
+
+
+
+    if data.startswith("sl_"):
+
+        trade_id = data.split("_")[1]
+
+
+        update_result(
+            trade_id,
+            "SL"
+        )
+
+
+        await query.edit_message_text(
+            "❌ SL ثبت شد"
+        )
+
+
+        return
+
+
+
+
+
+
+    if data.startswith("cancel_"):
+
+
+        await query.edit_message_text(
+
+            "🚫 سیگنال لغو شد"
+
+        )
+
+
+        return
+
+
+
+
+
+
+
     if data == "back":
+
 
         await query.edit_message_text(
 
@@ -300,7 +374,11 @@ async def button(
 
         )
 
+
         return
+
+
+
 
 
 
@@ -321,7 +399,9 @@ async def button(
 
         )
 
+
         return
+
 
 
 
@@ -333,6 +413,7 @@ async def button(
 
         if query.from_user.id != ADMIN_ID:
             return
+
 
 
         await query.edit_message_text(
@@ -350,7 +431,9 @@ Total Users:
 
         )
 
+
         return
+
 
 
 
@@ -368,7 +451,9 @@ Total Users:
 
         )
 
+
         return
+
 
 
 
@@ -402,7 +487,10 @@ Status:
 
         )
 
+
         return
+
+
 
 
 
@@ -436,7 +524,9 @@ Status:
 
         )
 
+
         return
+
 
 
 
@@ -459,7 +549,9 @@ Status:
 
         )
 
+
         return
+
 
 
 
@@ -482,7 +574,9 @@ Status:
 
         )
 
+
         return
+
 
 
 
@@ -500,14 +594,9 @@ Status:
 
         )
 
+
         return
-
-
-
-
-
-
-    if data == "signal":
+            if data == "signal":
 
 
         await query.edit_message_text(
@@ -515,9 +604,11 @@ Status:
         )
 
 
+
         df = get_gold_candles(
             "5min"
         )
+
 
 
         if df is None:
@@ -533,9 +624,12 @@ Status:
 
 
 
+
+
         analysis = ict_analysis(
             df
         )
+
 
 
         signal = create_signal(
@@ -548,12 +642,15 @@ Status:
 
 
 
+
         if signal:
 
 
-            save_trade(
+
+            trade_id = save_trade(
                 signal
             )
+
 
 
             await query.message.reply_text(
@@ -580,9 +677,17 @@ TP:
 
 Score:
 {signal.get('score',0)}
-"""
+
+
+👇 نتیجه معامله را انتخاب کنید:
+""",
+
+                reply_markup=signal_result_keyboard(
+                    trade_id
+                )
 
             )
+
 
 
         else:
@@ -595,14 +700,19 @@ Score:
             )
 
 
+
         return
-        # ================= TEXT HANDLER =================
 
 
-async def handler(
-    update: Update,
-    context: ContextTypes.DEFAULT_TYPE
-):
+
+
+
+
+# ================= TEXT =================
+
+
+
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     user_id = update.effective_user.id
@@ -627,7 +737,6 @@ async def handler(
 
         if df is None:
 
-
             await update.message.reply_text(
                 "❌ Data Error"
             )
@@ -654,7 +763,7 @@ async def handler(
         if signal:
 
 
-            save_trade(
+            trade_id = save_trade(
                 signal
             )
 
@@ -683,7 +792,14 @@ TP:
 
 Score:
 {signal.get('score',0)}
-"""
+
+
+👇 نتیجه را انتخاب کنید:
+""",
+
+                reply_markup=signal_result_keyboard(
+                    trade_id
+                )
 
             )
 
@@ -692,9 +808,7 @@ Score:
 
 
             await update.message.reply_text(
-
                 "❌ No Setup"
-
             )
 
 
@@ -702,7 +816,7 @@ Score:
 
 
 
-# ================= START BOT =================
+# ================= RUN =================
 
 
 
@@ -713,7 +827,6 @@ create_database()
 
 
 create_users_table()
-
 
 
 
@@ -766,7 +879,6 @@ app.add_handler(
     )
 
 )
-
 
 
 
