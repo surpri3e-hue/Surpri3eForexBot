@@ -1,135 +1,76 @@
 import sqlite3
 from datetime import datetime
 
-
-DB = "users.db"
-
-
+DB_NAME = "users.db"
 
 def connect():
-    return sqlite3.connect(DB)
-
-
+    return sqlite3.connect(DB_NAME)
 
 def create_users_table():
-
     conn = connect()
-    cur = conn.cursor()
-
-    cur.execute("""
-    CREATE TABLE IF NOT EXISTS users(
-
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-
-        telegram_id INTEGER UNIQUE,
-
-        join_date TEXT,
-
-        last_active TEXT,
-
-        status TEXT DEFAULT 'active'
-
+    cursor = conn.cursor()
+    
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS users (
+        id INTEGER PRIMARY KEY,
+        username TEXT,
+        first_name TEXT,
+        last_name TEXT,
+        joined_at TEXT,
+        last_active TEXT
     )
     """)
-
+    
     conn.commit()
     conn.close()
 
-
-
-
-
-def add_user(user_id):
-
+def add_user(user_id, username=None, first_name=None, last_name=None):
     conn = connect()
-    cur = conn.cursor()
-
-
-    now = datetime.now().strftime(
-        "%Y-%m-%d %H:%M"
-    )
-
-
-    cur.execute("""
-    INSERT OR IGNORE INTO users
-    (
-        telegram_id,
-        join_date,
-        last_active
-    )
-
-    VALUES (?,?,?)
-    """,
-    (
+    cursor = conn.cursor()
+    
+    cursor.execute("SELECT id FROM users WHERE id=?", (user_id,))
+    if cursor.fetchone():
+        conn.close()
+        return
+    
+    cursor.execute("""
+    INSERT INTO users (id, username, first_name, last_name, joined_at, last_active)
+    VALUES (?, ?, ?, ?, ?, ?)
+    """, (
         user_id,
-        now,
-        now
+        username,
+        first_name,
+        last_name,
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        datetime.now().strftime("%Y-%m-%d %H:%M")
     ))
-
-
+    
     conn.commit()
     conn.close()
-
-
-
-
 
 def update_activity(user_id):
-
     conn = connect()
-    cur = conn.cursor()
-
-
-    cur.execute("""
-    UPDATE users
-    SET last_active=?
-    WHERE telegram_id=?
-    """,
-    (
-        datetime.now().strftime("%Y-%m-%d %H:%M"),
-        user_id
-    ))
-
-
+    cursor = conn.cursor()
+    
+    cursor.execute("UPDATE users SET last_active=? WHERE id=?", 
+                   (datetime.now().strftime("%Y-%m-%d %H:%M"), user_id))
+    
     conn.commit()
     conn.close()
 
-
-
-
-
 def get_users_count():
-
     conn = connect()
-    cur = conn.cursor()
-
-    cur.execute(
-        "SELECT COUNT(*) FROM users"
-    )
-
-    result = cur.fetchone()[0]
-
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM users")
+    count = cursor.fetchone()[0]
     conn.close()
+    return count
 
-    return result
 def get_all_users():
-
     conn = connect()
-    cur = conn.cursor()
-
-
-    cur.execute(
-        "SELECT telegram_id FROM users"
-    )
-
-
-    rows = cur.fetchall()
-
-
+    cursor = conn.cursor()
+    cursor.execute("SELECT id, last_active FROM users ORDER BY id DESC")
+    rows = cursor.fetchall()
     conn.close()
-
-
-    return [
-        row[0]
-        for row in rows
-    ]
+    
+    return [{'id': r[0], 'last_active': r[1]} for r in rows]
