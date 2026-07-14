@@ -30,7 +30,8 @@ ADMIN_ID = 816822644
 
 
 
-# ---------- USER PANEL ----------
+# ---------------- MENUS ----------------
+
 
 def user_keyboard():
 
@@ -45,12 +46,9 @@ def user_keyboard():
 
         [
             InlineKeyboardButton(
-                "📊 وضعیت عملکرد",
-                callback_data="status"
-            )
-        ],
-
-        [
+                "📊 عملکرد",
+                callback_data="performance"
+            ),
             InlineKeyboardButton(
                 "📜 تاریخچه",
                 callback_data="history"
@@ -59,8 +57,22 @@ def user_keyboard():
 
         [
             InlineKeyboardButton(
+                "💎 VIP",
+                callback_data="vip"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
                 "📢 کانال",
                 url="https://t.me/YOUR_CHANNEL"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "⚙️ تنظیمات",
+                callback_data="settings"
             )
         ]
 
@@ -71,8 +83,6 @@ def user_keyboard():
 
 
 
-
-# ---------- ADMIN PANEL ----------
 
 def admin_keyboard():
 
@@ -80,22 +90,61 @@ def admin_keyboard():
 
         [
             InlineKeyboardButton(
+                "📊 Dashboard",
+                callback_data="dashboard"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
                 "👥 Users",
                 callback_data="users"
+            ),
+            InlineKeyboardButton(
+                "📢 Broadcast",
+                callback_data="broadcast"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "📊 Report",
-                callback_data="report"
+                "🔒 Channel Lock",
+                callback_data="lock"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "🧪 Test Signal",
-                callback_data="signal"
+                "🚀 Signal Control",
+                callback_data="signal_control"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📈 Analytics",
+                callback_data="analytics"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🧠 AI Settings",
+                callback_data="ai_settings"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "📜 Logs",
+                callback_data="logs"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 بازگشت",
+                callback_data="back"
             )
         ]
 
@@ -105,6 +154,9 @@ def admin_keyboard():
 
 
 
+
+
+# ---------------- START ----------------
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -119,9 +171,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         """
 🤖 Surpri3e AI Scanner
 
-Welcome
+به پنل خوش آمدید
 
-Choose an option:
+یک گزینه انتخاب کنید:
 """,
         reply_markup=user_keyboard()
     )
@@ -130,26 +182,23 @@ Choose an option:
 
 
 
+
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    user_id = update.effective_user.id
-
-
-    if user_id != ADMIN_ID:
+    if update.effective_user.id != ADMIN_ID:
 
         await update.message.reply_text(
-            "⛔ Access Denied"
+            "⛔ دسترسی ندارید"
         )
 
         return
-
 
 
     await update.message.reply_text(
         """
 🤖 ADMIN PANEL
 
-Select:
+مدیریت ربات:
 """,
         reply_markup=admin_keyboard()
     )
@@ -158,6 +207,8 @@ Select:
 
 
 
+# ---------------- BUTTONS ----------------
+
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
@@ -165,8 +216,19 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await query.answer()
 
-
     data = query.data
+
+
+
+    if data == "back":
+
+        await query.edit_message_text(
+            "🤖 Surpri3e AI Scanner",
+            reply_markup=user_keyboard()
+        )
+
+        return
+
 
 
 
@@ -183,32 +245,61 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"""
 👥 Users
 
-Total:
+Total Users:
 {count}
-"""
+""",
+            reply_markup=admin_keyboard()
         )
 
+        return
 
 
-    elif data == "report":
+
+
+
+    if data == "dashboard":
+
+        await query.edit_message_text(
+            """
+📊 Dashboard
+
+Bot: 🟢 Online
+
+Market:
+🟢 Connected
+
+Scanner:
+🟢 Active
+""",
+            reply_markup=admin_keyboard()
+        )
+
+        return
+
+
+
+
+
+
+    if data in [
+        "performance",
+        "analytics"
+    ]:
 
 
         await query.edit_message_text(
-            create_report()
+            create_report(),
+            reply_markup=user_keyboard()
         )
 
-
-
-    elif data == "status":
-
-
-        await query.edit_message_text(
-            create_report()
-        )
+        return
 
 
 
-    elif data == "signal":
+
+
+
+    if data == "signal":
 
 
         await query.edit_message_text(
@@ -216,7 +307,9 @@ Total:
         )
 
 
-        df = get_gold_candles("5min")
+        df = get_gold_candles(
+            "5min"
+        )
 
 
         if df is None:
@@ -238,6 +331,7 @@ Total:
         )
 
 
+
         if signal:
 
             save_trade(signal)
@@ -264,7 +358,6 @@ Score:
 """
             )
 
-
         else:
 
             await query.message.reply_text(
@@ -275,23 +368,44 @@ Score:
 
 
 
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    if update.message:
+    else:
 
-        update_activity(
-            update.effective_user.id
+
+        await query.edit_message_text(
+            f"""
+⚙️ بخش انتخابی:
+
+{data}
+
+به زودی فعال می‌شود.
+""",
+            reply_markup=admin_keyboard()
         )
 
+
+
+
+
+# ---------------- TEXT ----------------
+
+
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    update_activity(
+        update.effective_user.id
+    )
 
 
     text = update.message.text.upper()
 
 
-
     if text.startswith("SIGNAL"):
 
-        df = get_gold_candles("5min")
+
+        df = get_gold_candles(
+            "5min"
+        )
 
 
         analysis = ict_analysis(df)
@@ -303,6 +417,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+
         if signal:
 
             save_trade(signal)
@@ -339,7 +454,7 @@ Score:
 
 
 
-# ---------- START ----------
+# ---------------- RUN ----------------
 
 
 create_users_table()
