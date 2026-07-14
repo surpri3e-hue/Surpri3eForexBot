@@ -1,8 +1,14 @@
-from telegram import Update
-from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
-
 import os
 import asyncio
+
+from telegram import Update
+from telegram.ext import (
+    Application,
+    CommandHandler,
+    MessageHandler,
+    ContextTypes,
+    filters
+)
 
 from market import get_gold_candles
 from ict import ict_analysis
@@ -13,14 +19,15 @@ from chart import create_chart
 from tracker import check_trades
 
 
-TOKEN = os.getenv("BOT_KEY")
+TOKEN = os.getenv("BOT_TOKEN")
+
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
 """
-🤖 Surpri3e AI Forex Bot Online
+🤖 Surpri3e AI Scanner Online
 
 Commands:
 
@@ -31,7 +38,7 @@ Signal M30
 Signal H1
 Signal H4
 
-Status
+STATUS
 """
     )
 
@@ -42,7 +49,6 @@ async def tracker_loop():
     while True:
 
         try:
-
             check_trades()
 
         except Exception as e:
@@ -58,7 +64,8 @@ async def tracker_loop():
 
 
 
-async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+async def signal_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     text = update.message.text.upper()
 
@@ -74,11 +81,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
     if not text.startswith("SIGNAL"):
 
         return
-
 
 
 
@@ -89,65 +94,58 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-    intervals = {
+    timeframes = {
 
-        "M1":"1min",
-        "M5":"5min",
-        "M15":"15min",
-        "M30":"30min",
-        "H1":"1h",
-        "H4":"4h"
+        "M1": "1min",
+        "M5": "5min",
+        "M15": "15min",
+        "M30": "30min",
+        "H1": "1h",
+        "H4": "4h"
 
     }
 
 
 
-
-    if tf not in intervals:
-
+    if tf not in timeframes:
 
         await update.message.reply_text(
-            "❌ Timeframe invalid"
+            "❌ تایم فریم اشتباه است"
         )
 
         return
 
 
 
-
-    loading = await update.message.reply_text(
-
+    msg = await update.message.reply_text(
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-🔍 Checking ICT Model...
+🔍 Analyzing ICT...
 """
     )
 
 
 
-
     df = get_gold_candles(
-        intervals[tf]
+        timeframes[tf]
     )
 
 
 
     if df is None:
 
-
-        await loading.edit_text(
+        await msg.edit_text(
 """
 ❌ Data Error
 
-Cannot receive market data.
+دریافت دیتا مشکل دارد
 """
         )
 
         return
-
 
 
 
@@ -163,29 +161,17 @@ Cannot receive market data.
 
 
 
-
-
     if signal:
-
 
 
         save_trade(signal)
 
 
-
-        chart_file = create_chart(
-            df,
-            signal,
-            tf
-        )
-
-
-
-        result = f"""
-🚨 ICT SIGNAL FOUND
+        await msg.edit_text(
+f"""
+🚨 ICT SIGNAL
 
 XAUUSD {tf}
-
 
 Direction:
 {signal['direction']}
@@ -215,36 +201,44 @@ Reason:
 
 {', '.join(signal['reason'])}
 """
-
-
-
-        await loading.edit_text(
-            result
         )
 
 
-        with open(chart_file,"rb") as photo:
+        try:
 
-
-            await update.message.reply_photo(
-                photo=photo,
-                caption="📊 ICT Chart"
+            chart = create_chart(
+                df,
+                signal,
+                tf
             )
 
+
+            with open(chart,"rb") as photo:
+
+                await update.message.reply_photo(
+                    photo=photo,
+                    caption="📊 ICT Chart"
+                )
+
+        except Exception as e:
+
+            print(
+                "Chart Error:",
+                e
+            )
 
 
 
     else:
 
 
-        await loading.edit_text(
-
+        await msg.edit_text(
 f"""
 ❌ No Setup
 
 XAUUSD {tf}
 
-ICT conditions are not ready.
+ICT confirmation not enough.
 """
         )
 
@@ -271,7 +265,7 @@ async def main():
     app.add_handler(
         MessageHandler(
             filters.TEXT,
-            handler
+            signal_handler
         )
     )
 
@@ -283,15 +277,12 @@ async def main():
 
 
 
-    await app.initialize()
-
-    await app.start()
-
-    await app.updater.start_polling()
+    print(
+        "BOT STARTED"
+    )
 
 
-
-    await asyncio.Event().wait()
+    app.run_polling()
 
 
 
