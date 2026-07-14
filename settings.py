@@ -147,3 +147,11 @@ def set_setting(key, value):
     conn.commit()
 
     conn.close()
+
+
+
+
+
+def init_settings():
+
+    create_settings()
