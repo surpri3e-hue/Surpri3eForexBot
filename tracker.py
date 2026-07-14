@@ -1,11 +1,17 @@
-from database import get_trades, update_result
+from database import get_open_trades, update_result
 from market import get_gold_candles
 
 
 
 def check_trades():
 
-    trades = get_trades()
+    trades = get_open_trades()
+
+
+    if not trades:
+
+        return
+
 
 
     df = get_gold_candles(
@@ -14,6 +20,7 @@ def check_trades():
 
 
     if df is None:
+
         return
 
 
@@ -31,17 +38,9 @@ def check_trades():
 
         direction = trade[2]
 
-        tp = trade[5]
-
         sl = trade[4]
 
-        result = trade[7]
-
-
-
-        if result != "ACTIVE":
-
-            continue
+        tp = trade[5]
 
 
 
@@ -68,8 +67,8 @@ def check_trades():
 
 
 
-        # SELL
 
+        # SELL
 
         elif direction == "SELL":
 
