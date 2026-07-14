@@ -22,10 +22,11 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "Signal M1\n"
         "Signal M5\n"
         "Signal M15\n"
+        "Signal M30\n"
         "Signal H1\n"
+        "Signal H4\n"
         "Status"
     )
-
 
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -33,49 +34,45 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.upper()
 
 
-    # گزارش وضعیت
     if text == "STATUS":
 
         await update.message.reply_text(
             create_report()
         )
-
         return
 
 
 
-    # دریافت سیگنال
-    if text.startswith("SIGNAL"):
+    if not text.startswith("SIGNAL"):
+        return
 
 
-        tf = text.replace("SIGNAL ", "")
+    tf = text.replace("SIGNAL ", "")
 
 
-        intervals = {
-            "M1": "1min",
-            "M5": "5min",
-            "M15": "15min",
-            "M30": "30min",
-            "H1": "1h",
-            "H4": "4h",
-            "D1": "1day",
-            "W1": "1week",
-            "MN1": "1month"
-        }
+    intervals = {
+        "M1": "1min",
+        "M5": "5min",
+        "M15": "15min",
+        "M30": "30min",
+        "H1": "1h",
+        "H4": "4h",
+        "D1": "1day",
+        "W1": "1week",
+        "MN1": "1month"
+    }
 
 
-        if tf not in intervals:
+    if tf not in intervals:
 
-            await update.message.reply_text(
-                "❌ Invalid timeframe"
-            )
-
-            return
-
+        await update.message.reply_text(
+            "❌ Invalid timeframe"
+        )
+        return
 
 
-        # پیام لودینگ
-        loading = await update.message.reply_text(
+
+    loading = await update.message.reply_text(
 f"""
 🤖 Surpri3e AI Scanner
 
@@ -85,46 +82,58 @@ Analyzing Market...
 
 [░░░░░░░░░░] 0%
 
+Time:
+0 / 30 minutes
+
 Checking:
-⬜ Price Data
 ⬜ Liquidity
 ⬜ CHoCH
 ⬜ FVG
 ⬜ Entry Model
-
-⏳ Searching for high quality setup...
 """
-        )
+    )
+
+
+    signal = None
+
+
+    for minute in range(30):
+
+
+        progress = int(((minute + 1) / 30) * 100)
+
+        filled = int(progress / 10)
+
+        bar = "█" * filled + "░" * (10-filled)
 
 
 
-        # انیمیشن لودینگ
-        for i in range(1, 6):
-
-            progress = "█" * i + "░" * (10-i)
-
-            await loading.edit_text(
+        await loading.edit_text(
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-Analyzing Market...
+[{bar}] {progress}%
 
-[{progress}] {i*20}%
+Time:
+{minute+1} / 30 minutes
 
-Checking:
-{"✅" if i>=1 else "⬜"} Price Data
-{"✅" if i>=2 else "⬜"} Liquidity
-{"✅" if i>=3 else "⬜"} CHoCH
-{"✅" if i>=4 else "⬜"} FVG
-{"✅" if i>=5 else "⬜"} Entry Model
+🔍 Scanning ICT Model...
 
-⏳ Searching...
+Liquidity:
+⏳ Checking
+
+Structure:
+⏳ Checking
+
+FVG:
+⏳ Checking
+
+Entry:
+⏳ Waiting
 """
-            )
-
-            await asyncio.sleep(2)
+        )
 
 
 
@@ -133,36 +142,35 @@ Checking:
         )
 
 
+        if df is not None:
 
-        if df is None:
 
-            await loading.edit_text(
-                "❌ Market data error"
+            analysis = ict_analysis(df)
+
+
+            signal = create_signal(
+                df,
+                analysis
             )
 
-            return
+
+            if signal:
+                break
 
 
 
-        analysis = ict_analysis(df)
+        await asyncio.sleep(60)
 
 
 
-        signal = create_signal(
-            df,
-            analysis
-        )
+    if signal:
 
 
-
-        if signal:
-
-
-            save_trade(signal)
+        save_trade(signal)
 
 
-            msg = f"""
-🚨 ICT SIGNAL FOUND
+        result = f"""
+🚨 HIGH QUALITY ICT SIGNAL
 
 XAUUSD {tf}
 
@@ -186,20 +194,24 @@ Reason:
 """
 
 
-        else:
+    else:
 
 
-            msg = """
+        result = f"""
 ❌ No High Quality Setup
 
-ICT conditions not completed.
+XAUUSD {tf}
+
+30 minute scan completed.
+
+No valid ICT entry found.
 
 Waiting for next command.
 """
 
 
 
-        await loading.edit_text(msg)
+    await loading.edit_text(result)
 
 
 
