@@ -1,4 +1,3 @@
-return {
- "direction": "BUY",
- "score":100
-}
+def ict_analysis(df):
+
+    return None
