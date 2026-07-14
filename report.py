@@ -1,11 +1,33 @@
+from database import get_statistics
+
+
+
 def create_report():
 
-    return """
+    stats = get_statistics()
+
+
+    return f"""
 📊 Surpri3e AI Report
 
-No data available yet.
 
-Trades: 0
-Win Rate: 0%
-Profit Factor: 0
+📌 Total Trades:
+{stats['total']}
+
+
+✅ Wins:
+{stats['wins']}
+
+
+❌ Losses:
+{stats['losses']}
+
+
+🎯 Win Rate:
+{stats['winrate']}%
+
+
+💰 Profit Factor:
+{stats['profit_factor']}
+
 """
