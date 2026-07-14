@@ -17,6 +17,7 @@ def connect():
 def create_database():
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
@@ -46,6 +47,7 @@ def create_database():
 
 
     conn.commit()
+
     conn.close()
 
 
@@ -55,6 +57,7 @@ def create_database():
 def save_trade(signal):
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
@@ -97,8 +100,16 @@ def save_trade(signal):
     ))
 
 
+    trade_id = cursor.lastrowid
+
+
     conn.commit()
+
     conn.close()
+
+
+    return trade_id
+
 
 
 
@@ -107,6 +118,7 @@ def save_trade(signal):
 def get_trades():
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
@@ -129,9 +141,11 @@ def get_trades():
 
 
 
+
 def update_result(trade_id, result):
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
@@ -168,7 +182,9 @@ def update_result(trade_id, result):
 
 
     conn.commit()
+
     conn.close()
+
 
 
 
@@ -177,6 +193,7 @@ def update_result(trade_id, result):
 def get_statistics():
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
@@ -228,6 +245,7 @@ def get_statistics():
 
     winrate = 0
 
+
     if total > 0:
 
         winrate = round(
@@ -238,7 +256,9 @@ def get_statistics():
 
 
 
+
     profit_factor = 0
+
 
     if total_loss > 0:
 
@@ -246,6 +266,8 @@ def get_statistics():
             total_profit / total_loss,
             2
         )
+
+
 
 
 
@@ -267,9 +289,11 @@ def get_statistics():
 
 
 
+
 def get_open_trades():
 
     conn = connect()
+
     cursor = conn.cursor()
 
 
