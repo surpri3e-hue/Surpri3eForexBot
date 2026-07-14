@@ -2,7 +2,6 @@ from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
 
 import os
-import asyncio
 
 from market import get_gold_candles
 from ict import ict_analysis
@@ -15,25 +14,37 @@ from chart import create_chart
 TOKEN = os.getenv("BOT_TOKEN")
 
 
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
-        "🤖 Surpri3e Forex Bot Online\n\n"
-        "Commands:\n"
-        "Signal M1\n"
-        "Signal M5\n"
-        "Signal M15\n"
-        "Signal M30\n"
-        "Signal H1\n"
-        "Signal H4\n"
-        "Status"
+"""
+🤖 Surpri3e AI Forex Bot Online
+
+Commands:
+
+Signal M1
+Signal M5
+Signal M15
+Signal M30
+Signal H1
+Signal H4
+
+Status
+"""
     )
+
+
 
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
+
     text = update.message.text.upper()
 
+
+
+    # گزارش
 
     if text == "STATUS":
 
@@ -44,27 +55,38 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
+
+
     if not text.startswith("SIGNAL"):
+
         return
 
 
-    tf = text.replace("SIGNAL ", "")
+
+
+    tf = text.replace(
+        "SIGNAL ",
+        ""
+    )
+
 
 
     intervals = {
-        "M1": "1min",
-        "M5": "5min",
-        "M15": "15min",
-        "M30": "30min",
-        "H1": "1h",
-        "H4": "4h",
-        "D1": "1day",
-        "W1": "1week",
-        "MN1": "1month"
+
+        "M1":"1min",
+        "M5":"5min",
+        "M15":"15min",
+        "M30":"30min",
+        "H1":"1h",
+        "H4":"4h"
+
     }
 
 
+
+
     if tf not in intervals:
+
 
         await update.message.reply_text(
             "❌ Invalid timeframe"
@@ -74,75 +96,70 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
+
     loading = await update.message.reply_text(
+
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-Analyzing Market...
+Analyzing...
 
-🔍 Searching ICT Setup...
+🔍 Checking ICT Model
+
+Liquidity
+⏳
+
+FVG
+⏳
+
+Structure
+⏳
+
+Entry
+⏳
 """
+
     )
 
 
-    signal = None
-    df = None
+
+
+    df = get_gold_candles(
+        intervals[tf]
+    )
 
 
 
-    for minute in range(30):
-
-        df = get_gold_candles(
-            intervals[tf]
-        )
-
-
-        if df is not None:
-
-
-            analysis = ict_analysis(df)
-
-
-            signal = create_signal(
-                df,
-                analysis
-            )
-
-
-            if signal:
-                break
-
+    if df is None:
 
 
         await loading.edit_text(
-f"""
-🤖 Surpri3e AI Scanner
+"""
+❌ Data Error
 
-XAUUSD {tf}
-
-Progress:
-{minute+1}/30 minutes
-
-🔍 Scanning ICT Model...
-
-Liquidity:
-⏳ Checking
-
-Structure:
-⏳ Checking
-
-FVG:
-⏳ Checking
-
-Entry:
-⏳ Waiting
+Cannot receive XAUUSD data.
 """
         )
 
+        return
 
-        await asyncio.sleep(60)
+
+
+
+
+    analysis = ict_analysis(df)
+
+
+
+    signal = create_signal(
+        df,
+        analysis
+    )
+
+
 
 
 
@@ -150,7 +167,9 @@ Entry:
     if signal:
 
 
+
         save_trade(signal)
+
 
 
         chart_file = create_chart(
@@ -160,8 +179,9 @@ Entry:
         )
 
 
+
         result = f"""
-🚨 HIGH QUALITY ICT SIGNAL
+🚨 ICT SIGNAL FOUND
 
 XAUUSD {tf}
 
@@ -180,38 +200,62 @@ TP:
 RR:
 {signal['rr']}
 
+Score:
+{signal['score']}/100
+
 Reason:
+
 {', '.join(signal['reason'])}
 """
 
 
-        await loading.edit_text(result)
+
+        await loading.edit_text(
+            result
+        )
 
 
-        with open(chart_file, "rb") as photo:
+
+        with open(chart_file,"rb") as photo:
+
 
             await update.message.reply_photo(
+
                 photo=photo,
+
                 caption="📊 ICT Chart"
+
             )
+
+
 
 
     else:
 
 
+
         await loading.edit_text(
+
 f"""
-❌ No High Quality Setup
+❌ No Setup
 
 XAUUSD {tf}
 
-30 minute scan completed.
+ICT conditions are not ready.
+
+Wait for next signal.
 """
+
         )
 
 
 
+
+
+
+
 app = Application.builder().token(TOKEN).build()
+
 
 
 app.add_handler(
@@ -222,12 +266,14 @@ app.add_handler(
 )
 
 
+
 app.add_handler(
     MessageHandler(
         filters.TEXT,
         handler
     )
 )
+
 
 
 app.run_polling()
