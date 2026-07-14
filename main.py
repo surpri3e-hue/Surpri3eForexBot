@@ -22,17 +22,20 @@ from database import (
     create_database,
     save_trade,
     update_result,
-    get_user_trades
+    get_user_trades,
+    get_statistics,
+    get_open_trades
 )
 
 from users import (
     create_users_table,
     add_user,
     update_activity,
-    get_users_count
+    get_users_count,
+    get_all_users
 )
 
-from settings import init_settings
+from settings import init_settings, get_settings
 from report import create_report
 
 from admin_tools import (
@@ -50,10 +53,10 @@ logging.basicConfig(
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = 816822644
+ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 
 if not TOKEN:
-    raise ValueError("❌ BOT_TOKEN environment variable is not set!")
+    raise ValueError("❌ BOT_TOKEN not set!")
 
 # ============ کیبورد کاربر ============
 def user_keyboard():
@@ -95,21 +98,22 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ تابع ارسال سیگنال ============
-async def send_signal_message(target, trade_id, signal, df):
+# ============ ارسال سیگنال ============
+async def send_signal(target, trade_id, signal, df):
     message = (
-        f"🚨 SIGNAL\n\n"
-        f"💰 Gold Price: {df['close'].iloc[-1]}\n\n"
-        f"Direction: {signal['direction']}\n"
-        f"Entry: {signal['entry']}\n"
-        f"SL: {signal['sl']}\n"
-        f"TP: {signal['tp']}\n"
-        f"Score: {signal.get('score', 0)}\n\n"
+        f"🚨 **سیگنال جدید**\n\n"
+        f"💰 **قیمت طلا:** {df['close'].iloc[-1]:.2f}\n\n"
+        f"📈 **جهت:** {signal['direction']}\n"
+        f"📍 **ورود:** {signal['entry']:.2f}\n"
+        f"🛑 **حد ضرر:** {signal['sl']:.2f}\n"
+        f"🎯 **حد سود:** {signal['tp']:.2f}\n"
+        f"⭐ **امتیاز:** {signal.get('score', 0)}\n\n"
         f"👇 نتیجه معامله را انتخاب کنید:"
     )
     await target.reply_text(
         message,
-        reply_markup=signal_result_keyboard(trade_id)
+        reply_markup=signal_result_keyboard(trade_id),
+        parse_mode='Markdown'
     )
 
 # ============ دستور /start ============
@@ -118,20 +122,31 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     add_user(user_id)
     update_activity(user_id)
     
+    welcome = (
+        "🤖 **Surpri3e AI Scanner**\n\n"
+        "به ربات سیگنال‌دهی طلا خوش آمدید!\n\n"
+        "🔹 برای دریافت سیگنال روی دکمه 🚨 کلیک کنید\n"
+        "🔹 آمار عملکرد خود را در 📊 ببینید\n"
+        "🔹 تاریخچه معاملات در 📜 موجود است\n\n"
+        "موفق باشید! 🍀"
+    )
+    
     await update.message.reply_text(
-        "🤖 Surpri3e AI Scanner\n\nبه پنل خوش آمدید",
-        reply_markup=user_keyboard()
+        welcome,
+        reply_markup=user_keyboard(),
+        parse_mode='Markdown'
     )
 
 # ============ دستور /admin ============
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ دسترسی ندارید")
+        await update.message.reply_text("⛔ دسترسی ندارید!")
         return
     
     await update.message.reply_text(
-        "🤖 ADMIN PANEL\n\nمدیریت ربات:",
-        reply_markup=admin_keyboard()
+        "🤖 **پنل ادمین**\n\nمدیریت ربات:",
+        reply_markup=admin_keyboard(),
+        parse_mode='Markdown'
     )
 
 # ============ مدیریت دکمه‌ها ============
@@ -144,87 +159,104 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("tp_"):
         trade_id = data.split("_")[1]
         update_result(trade_id, "TP")
-        await query.edit_message_text("✅ TP ثبت شد")
+        await query.edit_message_text("✅ **TP ثبت شد**", parse_mode='Markdown')
         return
 
     if data.startswith("sl_"):
         trade_id = data.split("_")[1]
         update_result(trade_id, "SL")
-        await query.edit_message_text("❌ SL ثبت شد")
+        await query.edit_message_text("❌ **SL ثبت شد**", parse_mode='Markdown')
         return
 
     if data.startswith("cancel_"):
-        await query.edit_message_text("🚫 سیگنال لغو شد")
+        await query.edit_message_text("🚫 **سیگنال لغو شد**", parse_mode='Markdown')
         return
 
     # -------- دکمه برگشت --------
     if data == "back":
         await query.edit_message_text(
-            "🤖 Surpri3e AI Scanner\n\nبه پنل خوش آمدید",
-            reply_markup=user_keyboard()
+            "🤖 **Surpri3e AI Scanner**\n\nبه پنل خوش آمدید",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
     # -------- دکمه‌های کاربر --------
     if data == "signal":
-        await query.edit_message_text("🔍 Analyzing XAUUSD...")
+        await query.edit_message_text("🔍 **در حال تحلیل طلا...**", parse_mode='Markdown')
         
-        df = get_gold_candles("5min")
-        if df is None:
-            await query.message.reply_text("❌ Data Error")
-            return
-        
-        analysis = ict_analysis(df)
-        signal = create_signal(df, analysis)
-        
-        if signal:
-            trade_id = save_trade(signal)
-            await send_signal_message(query.message, trade_id, signal, df)
-        else:
-            await query.message.reply_text("❌ No Setup")
+        try:
+            df = get_gold_candles("5min")
+            if df is None or df.empty:
+                await query.message.reply_text("❌ **خطا در دریافت داده**", parse_mode='Markdown')
+                return
+            
+            analysis = ict_analysis(df)
+            signal = create_signal(df, analysis)
+            
+            if signal:
+                trade_id = save_trade(signal)
+                await send_signal(query.message, trade_id, signal, df)
+            else:
+                await query.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
+        except Exception as e:
+            logging.error(f"Signal error: {e}")
+            await query.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
         return
 
     if data == "performance":
-        await query.edit_message_text(
-            create_report(),
-            reply_markup=user_keyboard()
+        stats = get_statistics()
+        text = (
+            f"📊 **آمار عملکرد**\n\n"
+            f"📈 **کل معاملات:** {stats['total']}\n"
+            f"✅ **برنده:** {stats['wins']}\n"
+            f"❌ **بازنده:** {stats['losses']}\n"
+            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n"
+            f"💰 **فاکتور سود:** {stats['profit_factor']}\n"
         )
+        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
         return
 
     if data == "history":
-        user_id = query.from_user.id
-        trades = get_user_trades(user_id)
+        trades = get_user_trades()
         
         if trades:
-            text = "📜 **تاریخچه معاملات شما:**\n\n"
+            text = "📜 **تاریخچه معاملات:**\n\n"
             for i, trade in enumerate(trades[:10], 1):
                 result = trade.get('result', 'در انتظار')
-                text += f"{i}. {trade['direction']} | Entry: {trade['entry']} | نتیجه: {result}\n"
-            await query.edit_message_text(text, reply_markup=user_keyboard())
+                emoji = "✅" if result == "TP" else "❌" if result == "SL" else "⏳"
+                text += f"{i}. {trade['direction']} | ورود: {trade['entry']} | {emoji} {result}\n"
+            await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
         else:
-            await query.edit_message_text("📭 هنوز معامله‌ای ندارید!", reply_markup=user_keyboard())
+            await query.edit_message_text(
+                "📭 **هنوز معامله‌ای ندارید!**",
+                reply_markup=user_keyboard(),
+                parse_mode='Markdown'
+            )
         return
 
     if data == "vip":
-        await query.edit_message_text(
+        text = (
             "💎 **پنل VIP**\n\n"
-            "✅ دسترسی به سیگنال‌های ویژه\n"
-            "✅ آنالیز پیشرفته\n"
-            "✅ پشتیبانی اختصاصی\n\n"
-            "برای عضویت با ادمین تماس بگیرید: @AmirHossein_Nik",
-            reply_markup=user_keyboard()
+            "✅ **سیگنال‌های ویژه**\n"
+            "✅ **آنالیز پیشرفته**\n"
+            "✅ **پشتیبانی اختصاصی**\n\n"
+            "برای عضویت با ادمین تماس بگیرید:\n"
+            "👤 @AmirHossein_Nik"
         )
+        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
         return
 
     if data == "settings":
-        await query.edit_message_text(
+        settings = get_settings()
+        text = (
             "⚙️ **تنظیمات**\n\n"
-            "🔹 تایم‌فریم: 5 دقیقه\n"
-            "🔹 هشدار: فعال\n"
-            "🔹 وضعیت: ربات آنلاین\n\n"
-            "به زودی تنظیمات بیشتر اضافه میشه!",
-            reply_markup=user_keyboard()
+            f"🔹 **تایم‌فریم:** {settings.get('timeframe', '5min')}\n"
+            f"🔹 **هشدار:** {'فعال' if settings.get('alert', True) else 'غیرفعال'}\n"
+            f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n\n"
+            "تنظیمات بیشتر به زودی اضافه میشه!"
         )
+        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
         return
 
     # -------- پنل ادمین --------
@@ -233,26 +265,35 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             dashboard(),
-            reply_markup=admin_keyboard()
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
     if data == "users":
         if query.from_user.id != ADMIN_ID:
             return
-        await query.edit_message_text(
-            f"👥 USERS\n\nTotal Users: {get_users_count()}",
-            reply_markup=admin_keyboard()
-        )
+        users = get_all_users()
+        text = f"👥 **کاربران**\n\n**کل کاربران:** {len(users)}\n\n"
+        for user in users[:20]:
+            text += f"🆔 {user['id']} | فعال: {user['last_active']}\n"
+        await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
     if data == "analytics":
         if query.from_user.id != ADMIN_ID:
             return
-        await query.edit_message_text(
-            create_report(),
-            reply_markup=admin_keyboard()
+        stats = get_statistics()
+        text = (
+            f"📈 **تحلیل پیشرفته**\n\n"
+            f"📊 **کل معاملات:** {stats['total']}\n"
+            f"✅ **برنده:** {stats['wins']}\n"
+            f"❌ **بازنده:** {stats['losses']}\n"
+            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n"
+            f"💰 **فاکتور سود:** {stats['profit_factor']}\n"
+            f"📈 **سود کل:** {stats.get('total_profit', 0)}\n"
         )
+        await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
     if data == "signal_control":
@@ -260,8 +301,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         status = toggle_signal()
         await query.edit_message_text(
-            f"🚀 SIGNAL CONTROL\n\nStatus: {status}",
-            reply_markup=admin_keyboard()
+            f"🚀 **کنترل سیگنال**\n\n**وضعیت:** {status}",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
@@ -270,8 +312,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         status = toggle_channel_lock()
         await query.edit_message_text(
-            f"🔒 CHANNEL LOCK\n\nStatus: {status}",
-            reply_markup=admin_keyboard()
+            f"🔒 **قفل کانال**\n\n**وضعیت:** {status}",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
@@ -280,7 +323,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             ai_status(),
-            reply_markup=admin_keyboard()
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
@@ -289,7 +333,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             logs_text(),
-            reply_markup=admin_keyboard()
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
         )
         return
 
@@ -299,20 +344,26 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_activity(user_id)
     text = update.message.text.upper()
 
-    if text.startswith("SIGNAL"):
-        df = get_gold_candles("5min")
-        if df is None:
-            await update.message.reply_text("❌ Data Error")
-            return
+    if text.startswith("SIGNAL") or text == "سیگنال":
+        await update.message.reply_text("🔍 **در حال تحلیل...**", parse_mode='Markdown')
         
-        analysis = ict_analysis(df)
-        signal = create_signal(df, analysis)
-        
-        if signal:
-            trade_id = save_trade(signal)
-            await send_signal_message(update.message, trade_id, signal, df)
-        else:
-            await update.message.reply_text("❌ No Setup")
+        try:
+            df = get_gold_candles("5min")
+            if df is None or df.empty:
+                await update.message.reply_text("❌ **خطا در دریافت داده**", parse_mode='Markdown')
+                return
+            
+            analysis = ict_analysis(df)
+            signal = create_signal(df, analysis)
+            
+            if signal:
+                trade_id = save_trade(signal)
+                await send_signal(update.message, trade_id, signal, df)
+            else:
+                await update.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
+        except Exception as e:
+            logging.error(f"Handler error: {e}")
+            await update.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
 
 # ============ اجرای اصلی ============
 def main():
@@ -331,16 +382,16 @@ def main():
         app.add_handler(CallbackQueryHandler(button))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
         
+        logging.info("🤖 Surpri3e AI Bot Started")
         print("🤖 Surpri3e AI Bot Started")
         
-        # ====== راه‌اندازی روی Railway ======
+        # اجرا با Polling (ساده‌ترین روش)
         port = int(os.environ.get("PORT", 8080))
-        
-        # استفاده از Polling (ساده‌ترین روش)
-        print(f"🔄 Starting bot with polling on port {port}...")
+        print(f"🔄 Running on port {port}")
         app.run_polling()
         
     except Exception as e:
+        logging.error(f"Main error: {e}")
         print(f"❌ Error: {e}")
         raise
 
