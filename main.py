@@ -23,6 +23,12 @@ from users import (
     get_users_count
 )
 
+from settings import (
+    init_settings,
+    get_setting,
+    set_setting
+)
+
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -30,7 +36,7 @@ ADMIN_ID = 816822644
 
 
 
-# ---------------- MENUS ----------------
+# ================= USER PANEL =================
 
 
 def user_keyboard():
@@ -72,7 +78,7 @@ def user_keyboard():
         [
             InlineKeyboardButton(
                 "⚙️ تنظیمات",
-                callback_data="settings"
+                callback_data="user_settings"
             )
         ]
 
@@ -82,6 +88,9 @@ def user_keyboard():
 
 
 
+
+
+# ================= ADMIN PANEL =================
 
 
 def admin_keyboard():
@@ -100,6 +109,7 @@ def admin_keyboard():
                 "👥 Users",
                 callback_data="users"
             ),
+
             InlineKeyboardButton(
                 "📢 Broadcast",
                 callback_data="broadcast"
@@ -109,7 +119,7 @@ def admin_keyboard():
         [
             InlineKeyboardButton(
                 "🔒 Channel Lock",
-                callback_data="lock"
+                callback_data="channel_lock"
             )
         ],
 
@@ -122,15 +132,15 @@ def admin_keyboard():
 
         [
             InlineKeyboardButton(
-                "📈 Analytics",
-                callback_data="analytics"
+                "🧠 AI Settings",
+                callback_data="ai_settings"
             )
         ],
 
         [
             InlineKeyboardButton(
-                "🧠 AI Settings",
-                callback_data="ai_settings"
+                "📈 Analytics",
+                callback_data="analytics"
             )
         ],
 
@@ -156,7 +166,54 @@ def admin_keyboard():
 
 
 
-# ---------------- START ----------------
+# ================= AI PANEL =================
+
+
+def ai_keyboard():
+
+    keyboard = [
+
+        [
+            InlineKeyboardButton(
+                "🟢 Safe",
+                callback_data="ai_safe"
+            ),
+
+            InlineKeyboardButton(
+                "🟡 Normal",
+                callback_data="ai_normal"
+            ),
+
+            InlineKeyboardButton(
+                "🔴 Aggressive",
+                callback_data="ai_aggressive"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "➕ Score",
+                callback_data="score_up"
+            ),
+
+            InlineKeyboardButton(
+                "➖ Score",
+                callback_data="score_down"
+            )
+        ],
+
+        [
+            InlineKeyboardButton(
+                "🔙 برگشت",
+                callback_data="admin_home"
+            )
+        ]
+
+    ]
+
+    return InlineKeyboardMarkup(keyboard)
+    
+    # ================= START =================
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -172,12 +229,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 🤖 Surpri3e AI Scanner
 
 به پنل خوش آمدید
-
-یک گزینه انتخاب کنید:
 """,
         reply_markup=user_keyboard()
     )
-
 
 
 
@@ -197,8 +251,6 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         """
 🤖 ADMIN PANEL
-
-مدیریت ربات:
 """,
         reply_markup=admin_keyboard()
     )
@@ -207,7 +259,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ---------------- BUTTONS ----------------
+# ================= BUTTONS =================
 
 
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -220,6 +272,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+    # برگشت کاربر
+
     if data == "back":
 
         await query.edit_message_text(
@@ -231,6 +285,23 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
+
+    # برگشت ادمین
+
+    if data == "admin_home":
+
+        await query.edit_message_text(
+            "🤖 ADMIN PANEL",
+            reply_markup=admin_keyboard()
+        )
+
+        return
+
+
+
+
+
+    # تعداد کاربران
 
     if data == "users":
 
@@ -245,7 +316,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"""
 👥 Users
 
-Total Users:
+Total:
 {count}
 """,
             reply_markup=admin_keyboard()
@@ -257,19 +328,30 @@ Total Users:
 
 
 
+
+    # داشبورد
+
     if data == "dashboard":
 
         await query.edit_message_text(
-            """
+            f"""
 📊 Dashboard
 
-Bot: 🟢 Online
 
-Market:
-🟢 Connected
+Bot:
+🟢 Online
 
-Scanner:
-🟢 Active
+
+Signal:
+{get_setting("signal_status")}
+
+
+AI Mode:
+{get_setting("ai_mode")}
+
+
+Minimum Score:
+{get_setting("minimum_score")}
 """,
             reply_markup=admin_keyboard()
         )
@@ -280,16 +362,23 @@ Scanner:
 
 
 
+    # AI SETTINGS
 
-    if data in [
-        "performance",
-        "analytics"
-    ]:
-
+    if data == "ai_settings":
 
         await query.edit_message_text(
-            create_report(),
-            reply_markup=user_keyboard()
+            f"""
+🧠 AI SETTINGS
+
+
+Mode:
+{get_setting("ai_mode")}
+
+
+Score:
+{get_setting("minimum_score")}
+""",
+            reply_markup=ai_keyboard()
         )
 
         return
@@ -298,11 +387,82 @@ Scanner:
 
 
 
+    if data == "ai_safe":
 
-    if data == "signal":
+        set_setting(
+            "ai_mode",
+            "SAFE"
+        )
 
 
-        await query.edit_message_text(
+    elif data == "ai_normal":
+
+        set_setting(
+            "ai_mode",
+            "NORMAL"
+        )
+
+
+    elif data == "ai_aggressive":
+
+        set_setting(
+            "ai_mode",
+            "AGGRESSIVE"
+        )
+
+
+
+
+
+    elif data == "score_up":
+
+        score = int(
+            get_setting("minimum_score")
+        )
+
+        score += 5
+
+        set_setting(
+            "minimum_score",
+            score
+        )
+
+
+
+
+    elif data == "score_down":
+
+        score = int(
+            get_setting("minimum_score")
+        )
+
+        score -= 5
+
+        if score < 0:
+            score = 0
+
+
+        set_setting(
+            "minimum_score",
+            score
+        )
+
+
+
+
+    elif data == "signal":
+
+        if get_setting("signal_status") == "OFF":
+
+            await query.message.reply_text(
+                "⛔ Signal system disabled"
+            )
+
+            return
+
+
+
+        await query.message.reply_text(
             "🔍 Analyzing XAUUSD..."
         )
 
@@ -341,17 +501,22 @@ Scanner:
 f"""
 🚨 SIGNAL
 
+
 Direction:
 {signal['direction']}
+
 
 Entry:
 {signal['entry']}
 
+
 SL:
 {signal['sl']}
 
+
 TP:
 {signal['tp']}
+
 
 Score:
 {signal['score']}
@@ -365,29 +530,45 @@ Score:
             )
 
 
+        return
+
 
 
 
 
     else:
 
-
         await query.edit_message_text(
-            f"""
-⚙️ بخش انتخابی:
-
-{data}
-
-به زودی فعال می‌شود.
-""",
+            "⚙️ این بخش در حال توسعه است",
             reply_markup=admin_keyboard()
         )
 
+        return
 
 
 
 
-# ---------------- TEXT ----------------
+
+    await query.edit_message_text(
+        f"""
+🧠 AI SETTINGS
+
+
+Mode:
+{get_setting("ai_mode")}
+
+
+Score:
+{get_setting("minimum_score")}
+""",
+        reply_markup=ai_keyboard()
+    )
+
+
+
+
+
+# ================= TEXT =================
 
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -402,11 +583,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text.startswith("SIGNAL"):
 
-
         df = get_gold_candles(
             "5min"
         )
-
 
         analysis = ict_analysis(df)
 
@@ -417,31 +596,12 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
-
         if signal:
 
             save_trade(signal)
 
-
             await update.message.reply_text(
-f"""
-🚨 SIGNAL
-
-Direction:
-{signal['direction']}
-
-Entry:
-{signal['entry']}
-
-SL:
-{signal['sl']}
-
-TP:
-{signal['tp']}
-
-Score:
-{signal['score']}
-"""
+                str(signal)
             )
 
         else:
@@ -454,10 +614,12 @@ Score:
 
 
 
-# ---------------- RUN ----------------
+# ================= RUN =================
 
 
 create_users_table()
+
+init_settings()
 
 
 app = Application.builder().token(TOKEN).build()
