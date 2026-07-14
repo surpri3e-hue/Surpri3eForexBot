@@ -1,3 +1,4 @@
+
 import os
 
 from telegram import (
@@ -36,9 +37,7 @@ from users import (
 )
 
 
-from settings import (
-    init_settings
-)
+from settings import init_settings
 
 
 from report import create_report
@@ -54,7 +53,6 @@ from admin_tools import (
 
 
 
-
 TOKEN = os.getenv(
     "BOT_TOKEN"
 )
@@ -63,10 +61,6 @@ TOKEN = os.getenv(
 ADMIN_ID = 816822644
 
 
-
-
-
-# ================= KEYBOARDS =================
 
 
 
@@ -108,6 +102,7 @@ def user_keyboard():
         ]
 
     ]
+
 
     return InlineKeyboardMarkup(
         keyboard
@@ -188,7 +183,6 @@ def admin_keyboard():
 
 
 
-
 def signal_result_keyboard(trade_id):
 
     keyboard = [
@@ -224,21 +218,14 @@ def signal_result_keyboard(trade_id):
 
 
 
-# ================= START =================
-
-
-
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     user_id = update.effective_user.id
 
-    add_user(
-        user_id
-    )
 
-    update_activity(
-        user_id
-    )
+    add_user(user_id)
+
+    update_activity(user_id)
 
 
     await update.message.reply_text(
@@ -253,7 +240,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=user_keyboard()
 
     )
-
 
 
 
@@ -281,11 +267,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply_markup=admin_keyboard()
 
-    )
-    # ================= BUTTON HANDLER =================
-
-
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    )async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
 
@@ -295,29 +277,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-
-
-    # نتیجه سیگنال
-
     if data.startswith("tp_"):
 
         trade_id = data.split("_")[1]
-
 
         update_result(
             trade_id,
             "TP"
         )
 
-
         await query.edit_message_text(
             "✅ TP ثبت شد"
         )
 
-
         return
-
-
 
 
 
@@ -326,45 +299,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         trade_id = data.split("_")[1]
 
-
         update_result(
             trade_id,
             "SL"
         )
 
-
         await query.edit_message_text(
             "❌ SL ثبت شد"
         )
 
-
         return
-
-
 
 
 
 
     if data.startswith("cancel_"):
 
-
         await query.edit_message_text(
-
             "🚫 سیگنال لغو شد"
-
         )
-
 
         return
 
 
 
 
-
-
-
     if data == "back":
-
 
         await query.edit_message_text(
 
@@ -374,18 +334,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         )
 
-
         return
 
 
 
 
-
-
-
-
     if data == "dashboard":
-
 
         if query.from_user.id != ADMIN_ID:
             return
@@ -399,21 +353,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         )
 
-
         return
-
-
-
 
 
 
 
     if data == "users":
 
-
         if query.from_user.id != ADMIN_ID:
             return
-
 
 
         await query.edit_message_text(
@@ -431,17 +379,12 @@ Total Users:
 
         )
 
-
         return
 
 
 
 
-
-
-
     if data == "analytics":
-
 
         await query.edit_message_text(
 
@@ -451,25 +394,18 @@ Total Users:
 
         )
 
-
         return
-
-
-
 
 
 
 
     if data == "signal_control":
 
-
         if query.from_user.id != ADMIN_ID:
             return
 
 
-
         status = toggle_signal()
-
 
 
         await query.edit_message_text(
@@ -487,26 +423,18 @@ Status:
 
         )
 
-
         return
-
-
-
-
 
 
 
 
     if data == "channel_lock":
 
-
         if query.from_user.id != ADMIN_ID:
             return
 
 
-
         status = toggle_channel_lock()
-
 
 
         await query.edit_message_text(
@@ -524,21 +452,15 @@ Status:
 
         )
 
-
         return
-
-
-
 
 
 
 
     if data == "ai_settings":
 
-
         if query.from_user.id != ADMIN_ID:
             return
-
 
 
         await query.edit_message_text(
@@ -549,21 +471,15 @@ Status:
 
         )
 
-
         return
-
-
-
 
 
 
 
     if data == "logs":
 
-
         if query.from_user.id != ADMIN_ID:
             return
-
 
 
         await query.edit_message_text(
@@ -574,17 +490,12 @@ Status:
 
         )
 
-
         return
 
 
 
 
-
-
-
     if data == "performance":
-
 
         await query.edit_message_text(
 
@@ -594,8 +505,8 @@ Status:
 
         )
 
+        return
 
-                return
 
 
 
@@ -606,59 +517,42 @@ Status:
         )
 
 
-
         df = get_gold_candles(
             "5min"
         )
 
 
-
         if df is None:
 
-
             await query.message.reply_text(
-
                 "❌ Data Error"
-
             )
 
             return
 
 
-
-
-
-        analysis = ict_analysis(
-            df
-        )
-
+        analysis = ict_analysis(df)
 
 
         signal = create_signal(
-
             df,
-
             analysis
-
         )
-
-
 
 
         if signal:
 
-
-
-            trade_id = save_trade(
-                signal
-            )
-
+            trade_id = save_trade(signal)
 
 
             await query.message.reply_text(
 
 f"""
 🚨 SIGNAL
+
+
+💰 Gold Price Live Now:
+{df['close'].iloc[-1]}
 
 
 Direction:
@@ -691,27 +585,15 @@ Score:
             )
 
 
-
         else:
 
-
             await query.message.reply_text(
-
                 "❌ No Setup"
-
             )
 
 
-
         return
-
-
-
-
-
-
-# ================= TEXT =================
-
+        # ================= TEXT =================
 
 
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -752,6 +634,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 
+
         signal = create_signal(
 
             df,
@@ -776,6 +659,10 @@ f"""
 🚨 SIGNAL
 
 
+💰 Gold Price Live Now:
+{df['close'].iloc[-1]}
+
+
 Direction:
 {signal['direction']}
 
@@ -796,7 +683,7 @@ Score:
 {signal.get('score',0)}
 
 
-👇 نتیجه را انتخاب کنید:
+👇 نتیجه معامله را انتخاب کنید:
 """,
 
                 reply_markup=signal_result_keyboard(
@@ -810,7 +697,9 @@ Score:
 
 
             await update.message.reply_text(
+
                 "❌ No Setup"
+
             )
 
 
@@ -829,6 +718,7 @@ create_database()
 
 
 create_users_table()
+
 
 
 
@@ -881,6 +771,7 @@ app.add_handler(
     )
 
 )
+
 
 
 
