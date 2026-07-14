@@ -1,57 +1,3 @@
-def find_fvg(df):
-
-    for i in range(len(df)-5, len(df)):
-
-        if df["low"].iloc[i] > df["high"].iloc[i-2]:
-            return "BUY"
-
-        if df["high"].iloc[i] < df["low"].iloc[i-2]:
-            return "SELL"
-
-    return None
-
-
-
-def liquidity_sweep(df):
-
-    last = df.iloc[-1]
-
-    high = df["high"].iloc[-20:-1].max()
-    low = df["low"].iloc[-20:-1].min()
-
-
-    if last["low"] < low and last["close"] > low:
-        return "BUY"
-
-
-    if last["high"] > high and last["close"] < high:
-        return "SELL"
-
-
-    return None
-
-
-
-def structure(df):
-
-    last = df.iloc[-1]
-
-    high = df["high"].iloc[-5:-1].max()
-    low = df["low"].iloc[-5:-1].min()
-
-
-    if last["close"] > high:
-        return "BUY"
-
-
-    if last["close"] < low:
-        return "SELL"
-
-
-    return None
-
-
-
 def ict_analysis(df):
 
     buy = 0
@@ -61,61 +7,93 @@ def ict_analysis(df):
     sell_reason = []
 
 
-    fvg = find_fvg(df)
-    sweep = liquidity_sweep(df)
-    bos = structure(df)
+    last = df.iloc[-1]
+
+
+    high = df["high"].iloc[-20:-1].max()
+    low = df["low"].iloc[-20:-1].min()
 
 
 
-    if fvg == "BUY":
-        buy += 25
-        buy_reason.append("FVG")
+    # Liquidity Sweep
 
+    if last["low"] < low and last["close"] > low:
 
-    if fvg == "SELL":
-        sell += 25
-        sell_reason.append("FVG")
-
-
-
-    if sweep == "BUY":
         buy += 40
         buy_reason.append("Liquidity Sweep")
 
 
-    if sweep == "SELL":
+    if last["high"] > high and last["close"] < high:
+
         sell += 40
         sell_reason.append("Liquidity Sweep")
 
 
 
-    if bos == "BUY":
+
+    # Structure
+
+    recent_high = df["high"].iloc[-5:-1].max()
+    recent_low = df["low"].iloc[-5:-1].min()
+
+
+
+    if last["close"] > recent_high:
+
         buy += 35
         buy_reason.append("BOS")
 
 
-    if bos == "SELL":
+
+    if last["close"] < recent_low:
+
         sell += 35
         sell_reason.append("BOS")
 
 
 
-    if buy >= 50:
+
+
+    # FVG ساده
+
+    if df["low"].iloc[-1] > df["high"].iloc[-3]:
+
+        buy += 25
+        buy_reason.append("FVG")
+
+
+
+    if df["high"].iloc[-1] < df["low"].iloc[-3]:
+
+        sell += 25
+        sell_reason.append("FVG")
+
+
+
+
+
+    if buy >= sell:
 
         return {
-            "direction":"BUY",
-            "score":buy,
-            "reason":buy_reason
+
+            "direction": "BUY" if buy >= 50 else "NONE",
+
+            "score": buy,
+
+            "reason": buy_reason
+
         }
 
 
-    if sell >= 50:
+
+    else:
 
         return {
-            "direction":"SELL",
-            "score":sell,
-            "reason":sell_reason
+
+            "direction": "SELL" if sell >= 50 else "NONE",
+
+            "score": sell,
+
+            "reason": sell_reason
+
         }
-
-
-    return None
