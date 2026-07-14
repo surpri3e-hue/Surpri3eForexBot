@@ -10,27 +10,42 @@ def get_gold_candles(interval):
 
     url = "https://api.twelvedata.com/time_series"
 
+
     params = {
+
         "symbol": "XAU/USD",
+
         "interval": interval,
-        "outputsize": 200,
-        "apikey": API_KEY
+
+        "outputsize": 100,
+
+        "apikey": API_KEY,
+
+        "timezone": "UTC"
+
     }
+
 
     try:
 
         response = requests.get(
             url,
             params=params,
-            timeout=10
+            timeout=15
         )
+
 
         data = response.json()
 
 
+
         if "values" not in data:
-            print("DATA ERROR:", data)
+
+            print(data)
+
             return None
+
+
 
 
         df = pd.DataFrame(
@@ -38,30 +53,38 @@ def get_gold_candles(interval):
         )
 
 
-        df = df.astype({
-            "open": float,
-            "high": float,
-            "low": float,
-            "close": float
-        })
+
+        df["open"] = df["open"].astype(float)
+
+        df["high"] = df["high"].astype(float)
+
+        df["low"] = df["low"].astype(float)
+
+        df["close"] = df["close"].astype(float)
 
 
-        # مرتب‌سازی از قدیمی به جدید
+
         df = df.iloc[::-1].reset_index(drop=True)
+
+
+
+        print(
+            "LATEST GOLD PRICE:",
+            df["close"].iloc[-1]
+        )
+
 
 
         return df
 
 
 
-    except requests.exceptions.Timeout:
-
-        print("API TIMEOUT")
-        return None
-
-
 
     except Exception as e:
 
-        print("MARKET ERROR:", e)
+        print(
+            "MARKET ERROR:",
+            e
+        )
+
         return None
