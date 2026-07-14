@@ -266,7 +266,9 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         reply_markup=admin_keyboard()
 
-    )async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    )
+    
+    async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     query = update.callback_query
 
