@@ -18,9 +18,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🤖 Surpri3e Forex Bot Online\n\n"
+        "Commands:\n"
+        "Signal M1\n"
         "Signal M5\n"
         "Signal M15\n"
+        "Signal M30\n"
         "Signal H1\n"
+        "Signal H4\n"
         "Status"
     )
 
@@ -32,18 +36,25 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "STATUS":
 
-        await update.message.reply_text(create_report())
+        await update.message.reply_text(
+            create_report()
+        )
+
         return
+
 
 
     if not text.startswith("SIGNAL"):
         return
 
 
+
     tf = text.replace("SIGNAL ", "")
 
 
+
     intervals = {
+
         "M1": "1min",
         "M5": "5min",
         "M15": "15min",
@@ -53,41 +64,44 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "D1": "1day",
         "W1": "1week",
         "MN1": "1month"
+
     }
+
 
 
     if tf not in intervals:
 
         await update.message.reply_text(
-            "❌ تایم فریم اشتباه است"
+            "❌ Invalid timeframe"
         )
+
         return
 
 
 
     loading = await update.message.reply_text(
+
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-🔍 Starting analysis...
+Analyzing Market...
 
 [░░░░░░░░░░] 0%
 
-Searching:
-⬜ Liquidity
-⬜ CHoCH
-⬜ FVG
-⬜ Entry
-
 Time:
-0/30 min
+0 / 30 minutes
+
+🔍 Searching ICT setup...
 """
+
     )
 
 
+
     signal = None
+
 
 
     for minute in range(30):
@@ -98,55 +112,86 @@ Time:
         )
 
 
-        if df is not None:
 
+        if df is None:
 
-            analysis = ict_analysis(df)
+            await loading.edit_text(
 
-            signal = create_signal(
-                df,
-                analysis
+f"""
+⚠️ Data unavailable
+
+XAUUSD {tf}
+
+Retrying...
+
+Time:
+{minute+1}/30 minutes
+"""
+
             )
 
+            await asyncio.sleep(60)
 
-            if signal:
-                break
+            continue
 
 
 
-        filled = int(((minute+1)/30)*10)
+        analysis = ict_analysis(df)
 
-        bar = "█"*filled + "░"*(10-filled)
+
+
+        signal = create_signal(
+            df,
+            analysis
+        )
+
+
+
+        if signal:
+
+            break
+
+
+
+        progress = int(((minute+1)/30)*100)
+
+        blocks = int(progress/10)
+
+        bar = "█"*blocks + "░"*(10-blocks)
 
 
 
         await loading.edit_text(
+
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-[{bar}]
+[{bar}] {progress}%
 
-Progress:
-{((minute+1)*100)//30}%
 
 Time:
-{minute+1}/30 min
+{minute+1}/30 minutes
 
 
-Status:
-🔍 Searching ICT setup...
+Checking:
 
-Liquidity: checking
-Structure: checking
-FVG: checking
-Entry: waiting
+✅ Price Data
+⏳ Liquidity
+⏳ CHoCH
+⏳ FVG
+⏳ Entry Model
+
+Waiting for high quality setup...
 """
+
         )
 
 
+
         await asyncio.sleep(60)
+
 
 
 
@@ -157,46 +202,65 @@ Entry: waiting
         save_trade(signal)
 
 
+
         result = f"""
+
 🚨 HIGH QUALITY ICT SIGNAL
 
+
 XAUUSD {tf}
+
 
 Direction:
 {signal['direction']}
 
+
 Entry:
 {signal['entry']}
+
 
 SL:
 {signal['sl']}
 
+
 TP:
 {signal['tp']}
+
 
 RR:
 {signal['rr']}
 
+
 Reason:
+
 {', '.join(signal['reason'])}
+
 """
+
 
 
     else:
 
 
         result = f"""
+
 ❌ No High Quality Setup
+
 
 XAUUSD {tf}
 
-30 minute scan finished.
 
-No valid entry found.
+30 minute scan completed.
+
+
+No valid ICT entry found.
+
 """
 
 
+
     await loading.edit_text(result)
+
 
 
 
