@@ -595,9 +595,11 @@ Status:
         )
 
 
-        return
-            if data == "signal":
+                return
 
+
+
+    if data == "signal":
 
         await query.edit_message_text(
             "🔍 Analyzing XAUUSD..."
