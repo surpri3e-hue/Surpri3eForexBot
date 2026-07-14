@@ -112,3 +112,24 @@ def get_users_count():
     conn.close()
 
     return result
+def get_all_users():
+
+    conn = connect()
+    cur = conn.cursor()
+
+
+    cur.execute(
+        "SELECT telegram_id FROM users"
+    )
+
+
+    rows = cur.fetchall()
+
+
+    conn.close()
+
+
+    return [
+        row[0]
+        for row in rows
+    ]
