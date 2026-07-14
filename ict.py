@@ -1,24 +1,25 @@
 def find_fvg(df):
 
-    for i in range(2, len(df)):
+    # فقط FVG های نزدیک قیمت را بررسی می‌کنیم
+
+    for i in range(len(df)-3, len(df)):
 
         # Bullish FVG
+
         if df["low"].iloc[i] > df["high"].iloc[i-2]:
 
             return {
-                "type": "BUY",
-                "high": df["high"].iloc[i-2],
-                "low": df["low"].iloc[i]
+                "type": "BUY"
             }
+
 
 
         # Bearish FVG
+
         if df["high"].iloc[i] < df["low"].iloc[i-2]:
 
             return {
-                "type": "SELL",
-                "high": df["high"].iloc[i],
-                "low": df["low"].iloc[i-2]
+                "type": "SELL"
             }
 
 
@@ -26,65 +27,62 @@ def find_fvg(df):
 
 
 
-def detect_liquidity_sweep(df):
+
+
+def liquidity_sweep(df):
 
     last = df.iloc[-1]
 
 
-    previous_high = df["high"].iloc[-20:-1].max()
-    previous_low = df["low"].iloc[-20:-1].min()
+    highs = df["high"].iloc[-15:-1]
+
+    lows = df["low"].iloc[-15:-1]
 
 
 
-    # Sweep High = احتمال فروش
-
-    if (
-        last["high"] > previous_high
-        and last["close"] < previous_high
-    ):
-
-        return "SELL"
-
-
-
-    # Sweep Low = احتمال خرید
-
-    if (
-        last["low"] < previous_low
-        and last["close"] > previous_low
-    ):
+    if last["low"] < lows.min() and last["close"] > lows.min():
 
         return "BUY"
 
 
 
-    return None
-
-
-
-
-def detect_structure(df):
-
-    last = df.iloc[-1]
-
-    highs = df["high"].iloc[-6:-1]
-    lows = df["low"].iloc[-6:-1]
-
-
-
-    if last["close"] > highs.max():
-
-        return "BUY"
-
-
-
-    if last["close"] < lows.min():
+    if last["high"] > highs.max() and last["close"] < highs.max():
 
         return "SELL"
 
 
 
     return None
+
+
+
+
+
+def market_structure(df):
+
+    last = df.iloc[-1]
+
+
+    recent_high = df["high"].iloc[-6:-1].max()
+
+    recent_low = df["low"].iloc[-6:-1].min()
+
+
+
+    if last["close"] > recent_high:
+
+        return "BUY"
+
+
+
+    if last["close"] < recent_low:
+
+        return "SELL"
+
+
+
+    return None
+
 
 
 
@@ -99,21 +97,19 @@ def displacement(df):
     )
 
 
-    candle_range = (
-        last["high"] - last["low"]
-    )
+    total = last["high"] - last["low"]
 
 
-    if candle_range == 0:
+    if total == 0:
+
         return False
 
 
 
-    # کندل قوی
-
-    if body / candle_range > 0.6:
+    if body / total >= 0.5:
 
         return True
+
 
 
     return False
@@ -125,19 +121,22 @@ def displacement(df):
 def ict_analysis(df):
 
 
-    score_buy = 0
-    score_sell = 0
+    buy_score = 0
+    sell_score = 0
 
-    reasons_buy = []
-    reasons_sell = []
+
+    buy_reason = []
+    sell_reason = []
 
 
 
     fvg = find_fvg(df)
 
-    sweep = detect_liquidity_sweep(df)
+    sweep = liquidity_sweep(df)
 
-    structure = detect_structure(df)
+    structure = market_structure(df)
+
+
 
 
 
@@ -145,16 +144,26 @@ def ict_analysis(df):
 
     if fvg:
 
+
         if fvg["type"] == "BUY":
 
-            score_buy += 30
-            reasons_buy.append("Bullish FVG")
+            buy_score += 30
+
+            buy_reason.append(
+                "Bullish FVG"
+            )
 
 
         else:
 
-            score_sell += 30
-            reasons_sell.append("Bearish FVG")
+            sell_score += 30
+
+            sell_reason.append(
+                "Bearish FVG"
+            )
+
+
+
 
 
 
@@ -162,14 +171,25 @@ def ict_analysis(df):
 
     if sweep == "BUY":
 
-        score_buy += 40
-        reasons_buy.append("Liquidity Sweep")
+        buy_score += 40
+
+        buy_reason.append(
+            "Liquidity Sweep"
+        )
+
 
 
     elif sweep == "SELL":
 
-        score_sell += 40
-        reasons_sell.append("Liquidity Sweep")
+        sell_score += 40
+
+        sell_reason.append(
+            "Liquidity Sweep"
+        )
+
+
+
+
 
 
 
@@ -177,60 +197,84 @@ def ict_analysis(df):
 
     if structure == "BUY":
 
-        score_buy += 20
-        reasons_buy.append("BOS/CHoCH")
+        buy_score += 20
+
+        buy_reason.append(
+            "BOS"
+        )
+
 
 
     elif structure == "SELL":
 
-        score_sell += 20
-        reasons_sell.append("BOS/CHoCH")
+        sell_score += 20
+
+        sell_reason.append(
+            "BOS"
+        )
 
 
 
-    # Displacement
+
+
+
+    # Candle strength
 
     if displacement(df):
 
-        if score_buy > score_sell:
 
-            score_buy += 10
-            reasons_buy.append("Displacement")
+        if buy_score > sell_score:
 
+            buy_score += 10
 
-        elif score_sell > score_buy:
-
-            score_sell += 10
-            reasons_sell.append("Displacement")
+            buy_reason.append(
+                "Displacement"
+            )
 
 
+        elif sell_score > buy_score:
+
+            sell_score += 10
+
+            sell_reason.append(
+                "Displacement"
+            )
 
 
-    # نتیجه نهایی
 
 
-    if score_buy >= 70:
+
+
+
+    if buy_score >= 60:
 
         return {
 
-            "direction": "BUY",
-            "score": score_buy,
-            "reason": reasons_buy
+            "direction":"BUY",
+
+            "score":buy_score,
+
+            "reason":buy_reason
 
         }
 
 
 
 
-    if score_sell >= 70:
+
+    if sell_score >= 60:
 
         return {
 
-            "direction": "SELL",
-            "score": score_sell,
-            "reason": reasons_sell
+            "direction":"SELL",
+
+            "score":sell_score,
+
+            "reason":sell_reason
 
         }
+
+
 
 
 
