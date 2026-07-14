@@ -1,71 +1,155 @@
 from telegram import Update
 from telegram.ext import Application, CommandHandler, MessageHandler, ContextTypes, filters
+
 import os
-import requests
+
+from market import get_gold_candles
+from ict import ict_analysis
+from signals import create_signal
+from database import save_trade
+from report import create_report
+
 
 TOKEN = os.getenv("BOT_TOKEN")
-API_KEY = os.getenv("TWELVE_API_KEY")
 
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
     await update.message.reply_text(
-        "🤖 Surpri3e Forex Bot Online\n\nCommands:\nSignal M1\nSignal M5"
+        "🤖 Surpri3e Forex Bot Online\n\n"
+        "Commands:\n"
+        "Signal M1\n"
+        "Signal M5\n"
+        "Status"
     )
 
 
-def get_gold_data(interval):
-    url = "https://api.twelvedata.com/time_series"
 
-    params = {
-        "symbol": "XAU/USD",
-        "interval": interval,
-        "outputsize": 5,
-        "apikey": API_KEY
-    }
+async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
-    response = requests.get(url, params=params)
-    data = response.json()
-
-    return data
-
-
-async def signal(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text.upper()
 
-    if text == "SIGNAL M1":
-        interval = "1min"
 
-    elif text == "SIGNAL M5":
-        interval = "5min"
+    if text == "STATUS":
 
-    else:
+        await update.message.reply_text(
+            create_report()
+        )
+
         return
 
-    data = get_gold_data(interval)
 
-    if "values" in data:
-        last = data["values"][0]
 
-        msg = f"""
-📊 XAUUSD {interval}
+    if text.startswith("SIGNAL"):
 
-Open: {last['open']}
-High: {last['high']}
-Low: {last['low']}
-Close: {last['close']}
 
-✅ Data received
-Waiting for ICT analysis...
+        tf = text.replace("SIGNAL ", "")
+
+
+        intervals = {
+            "M1": "1min",
+            "M5": "5min",
+            "M15": "15min",
+            "M30": "30min",
+            "H1": "1h",
+            "H4": "4h",
+            "D1": "1day",
+            "W1": "1week",
+            "MN1": "1month"
+        }
+
+
+        if tf not in intervals:
+
+            await update.message.reply_text(
+                "❌ Invalid timeframe"
+            )
+            return
+
+
+
+        await update.message.reply_text(
+            f"🔍 Scanning XAUUSD {tf}..."
+        )
+
+
+        df = get_gold_candles(
+            intervals[tf]
+        )
+
+
+        if df is None:
+
+            await update.message.reply_text(
+                "❌ Market data error"
+            )
+            return
+
+
+
+        analysis = ict_analysis(df)
+
+
+        signal = create_signal(
+            df,
+            analysis
+        )
+
+
+        if signal:
+
+
+            save_trade(signal)
+
+
+            msg = f"""
+🚨 ICT SIGNAL FOUND
+
+XAUUSD {tf}
+
+Direction:
+{signal['direction']}
+
+Entry:
+{signal['entry']}
+
+SL:
+{signal['sl']}
+
+TP:
+{signal['tp']}
+
+RR:
+{signal['rr']}
+
+Reason:
+{', '.join(signal['reason'])}
 """
-    else:
-        msg = f"❌ Data error:\n{data}"
 
-    await update.message.reply_text(msg)
+        else:
+
+            msg = """
+❌ No High Quality Setup
+
+Waiting for better ICT conditions.
+"""
+
+
+        await update.message.reply_text(msg)
+
 
 
 app = Application.builder().token(TOKEN).build()
 
+
 app.add_handler(CommandHandler("start", start))
-app.add_handler(MessageHandler(filters.TEXT, signal))
+
+app.add_handler(
+    MessageHandler(
+        filters.TEXT,
+        handler
+    )
+)
+
 
 app.run_polling()
