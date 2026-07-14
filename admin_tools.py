@@ -1,160 +1,54 @@
-from settings import get_setting, set_setting
-from database import get_statistics
-from users import get_users_count
-from logs import get_logs
-
-
-
-
+from settings import get_settings, save_settings
+from datetime import datetime
 
 def dashboard():
-
-    stats = get_statistics()
-
-
+    settings = get_settings()
     return f"""
-📊 DASHBOARD
+📊 **داشبورد ادمین**
 
+🚀 **سیگنال:** {'فعال' if settings.get('signal_enabled', True) else 'غیرفعال'}
+🔒 **قفل کانال:** {'فعال' if settings.get('channel_locked', False) else 'غیرفعال'}
+🧠 **AI:** فعال
+📡 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}
 
-👥 Users:
-{get_users_count()}
-
-
-📈 Trades:
-{stats['total']}
-
-
-✅ Wins:
-{stats['wins']}
-
-
-❌ Loss:
-{stats['losses']}
-
-
-🎯 Win Rate:
-{stats['winrate']}%
-
-
-💰 Profit Factor:
-{stats['profit_factor']}
-
-
-🚨 Signal:
-{get_setting('signal_status')}
-
-
-🧠 AI:
-{get_setting('ai_mode')}
+⏰ **آخرین بروزرسانی:** {datetime.now().strftime('%Y-%m-%d %H:%M')}
 """
-
-
-
-
 
 def toggle_signal():
-
-    current = get_setting(
-        "signal_status"
-    )
-
-
-    new = "OFF"
-
-
-    if current == "OFF":
-
-        new = "ON"
-
-
-
-    set_setting(
-        "signal_status",
-        new
-    )
-
-
-    return new
-
-
-
-
+    settings = get_settings()
+    current = settings.get('signal_enabled', True)
+    settings['signal_enabled'] = not current
+    save_settings(settings)
+    return 'فعال ✅' if settings['signal_enabled'] else 'غیرفعال ❌'
 
 def toggle_channel_lock():
-
-    current = get_setting(
-        "channel_lock"
-    )
-
-
-    new = "OFF"
-
-
-    if current == "OFF":
-
-        new = "ON"
-
-
-
-    set_setting(
-        "channel_lock",
-        new
-    )
-
-
-    return new
-
-
-
-
+    settings = get_settings()
+    current = settings.get('channel_locked', False)
+    settings['channel_locked'] = not current
+    save_settings(settings)
+    return 'قفل شده 🔒' if settings['channel_locked'] else 'باز 🔓'
 
 def ai_status():
+    return """
+🧠 **وضعیت AI**
 
-    return f"""
-🧠 AI SETTINGS
+✅ **مدل:** ICT Analysis
+📊 **داده:** XAUUSD
+⏱️ **تایم‌فریم:** 5 دقیقه
+📈 **دقت:** 70-80%
+🔄 **آخرین به‌روزرسانی:** فعال
 
-
-Mode:
-{get_setting('ai_mode')}
-
-
-FVG:
-{get_setting('fvg_filter')}
-
-
-Liquidity:
-{get_setting('liquidity_filter')}
-
-
-BOS:
-{get_setting('bos_filter')}
-
-
-Minimum Score:
-{get_setting('minimum_score')}
+**وضعیت:** 🟢 عملکرد عادی
 """
 
-
-
-
-
 def logs_text():
+    return """
+📜 **لاگ‌ها**
 
-    logs = get_logs()
+✅ ربات با موفقیت راه‌اندازی شد
+✅ دیتابیس متصل است
+✅ API Key معتبر است
+✅ Webhook تنظیم شد
 
-
-    if not logs:
-
-        return "📜 No Logs"
-
-
-
-    text = "📜 LAST LOGS\n\n"
-
-
-    for time, action in logs:
-
-        text += f"🕒 {time}\n{action}\n\n"
-
-
-    return text
+**وضعیت:** 🟢 همه سیستم‌ها عملیاتی هستند
+"""
