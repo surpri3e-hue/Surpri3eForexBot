@@ -1,19 +1,26 @@
 import os
 
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+
 from telegram.ext import (
     Application,
     CommandHandler,
-    MessageHandler,
     CallbackQueryHandler,
+    MessageHandler,
     ContextTypes,
     filters
 )
 
+
 from market import get_gold_candles
 from ict import ict_analysis
 from signals import create_signal
-from database import save_trade
+
+from database import (
+    save_trade,
+    create_database
+)
+
 from report import create_report
 
 from users import (
@@ -29,6 +36,12 @@ from settings import (
     set_setting
 )
 
+from admin_tools import (
+    dashboard,
+    toggle_signal
+)
+
+
 
 TOKEN = os.getenv("BOT_TOKEN")
 
@@ -36,7 +49,9 @@ ADMIN_ID = 816822644
 
 
 
-# ================= USER PANEL =================
+
+
+# ================= USER MENU =================
 
 
 def user_keyboard():
@@ -55,6 +70,7 @@ def user_keyboard():
                 "📊 عملکرد",
                 callback_data="performance"
             ),
+
             InlineKeyboardButton(
                 "📜 تاریخچه",
                 callback_data="history"
@@ -73,13 +89,6 @@ def user_keyboard():
                 "📢 کانال",
                 url="https://t.me/YOUR_CHANNEL"
             )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "⚙️ تنظیمات",
-                callback_data="user_settings"
-            )
         ]
 
     ]
@@ -90,7 +99,7 @@ def user_keyboard():
 
 
 
-# ================= ADMIN PANEL =================
+# ================= ADMIN MENU =================
 
 
 def admin_keyboard():
@@ -111,8 +120,8 @@ def admin_keyboard():
             ),
 
             InlineKeyboardButton(
-                "📢 Broadcast",
-                callback_data="broadcast"
+                "📈 Analytics",
+                callback_data="analytics"
             )
         ],
 
@@ -139,15 +148,8 @@ def admin_keyboard():
 
         [
             InlineKeyboardButton(
-                "📈 Analytics",
-                callback_data="analytics"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "📜 Logs",
-                callback_data="logs"
+                "📢 Broadcast",
+                callback_data="broadcast"
             )
         ],
 
@@ -161,58 +163,6 @@ def admin_keyboard():
     ]
 
     return InlineKeyboardMarkup(keyboard)
-
-
-
-
-
-# ================= AI PANEL =================
-
-
-def ai_keyboard():
-
-    keyboard = [
-
-        [
-            InlineKeyboardButton(
-                "🟢 Safe",
-                callback_data="ai_safe"
-            ),
-
-            InlineKeyboardButton(
-                "🟡 Normal",
-                callback_data="ai_normal"
-            ),
-
-            InlineKeyboardButton(
-                "🔴 Aggressive",
-                callback_data="ai_aggressive"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "➕ Score",
-                callback_data="score_up"
-            ),
-
-            InlineKeyboardButton(
-                "➖ Score",
-                callback_data="score_down"
-            )
-        ],
-
-        [
-            InlineKeyboardButton(
-                "🔙 برگشت",
-                callback_data="admin_home"
-            )
-        ]
-
-    ]
-
-    return InlineKeyboardMarkup(keyboard)
-    
     # ================= START =================
 
 
@@ -259,245 +209,43 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 
-# ================= BUTTONS =================
+# ================= SIGNAL =================
 
 
-async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def send_signal(update):
 
-    query = update.callback_query
-
-    await query.answer()
-
-    data = query.data
+    df = get_gold_candles(
+        "5min"
+    )
 
 
+    if df is None:
 
-    # برگشت کاربر
-
-    if data == "back":
-
-        await query.edit_message_text(
-            "🤖 Surpri3e AI Scanner",
-            reply_markup=user_keyboard()
+        await update.message.reply_text(
+            "❌ Data Error"
         )
 
         return
 
 
 
+    analysis = ict_analysis(df)
 
-    # برگشت ادمین
 
-    if data == "admin_home":
+    signal = create_signal(
+        df,
+        analysis
+    )
 
-        await query.edit_message_text(
-            "🤖 ADMIN PANEL",
-            reply_markup=admin_keyboard()
-        )
 
-        return
 
+    if signal:
 
 
+        save_trade(signal)
 
 
-    # تعداد کاربران
-
-    if data == "users":
-
-        if query.from_user.id != ADMIN_ID:
-            return
-
-
-        count = get_users_count()
-
-
-        await query.edit_message_text(
-            f"""
-👥 Users
-
-Total:
-{count}
-""",
-            reply_markup=admin_keyboard()
-        )
-
-        return
-
-
-
-
-
-
-    # داشبورد
-
-    if data == "dashboard":
-
-        await query.edit_message_text(
-            f"""
-📊 Dashboard
-
-
-Bot:
-🟢 Online
-
-
-Signal:
-{get_setting("signal_status")}
-
-
-AI Mode:
-{get_setting("ai_mode")}
-
-
-Minimum Score:
-{get_setting("minimum_score")}
-""",
-            reply_markup=admin_keyboard()
-        )
-
-        return
-
-
-
-
-
-    # AI SETTINGS
-
-    if data == "ai_settings":
-
-        await query.edit_message_text(
-            f"""
-🧠 AI SETTINGS
-
-
-Mode:
-{get_setting("ai_mode")}
-
-
-Score:
-{get_setting("minimum_score")}
-""",
-            reply_markup=ai_keyboard()
-        )
-
-        return
-
-
-
-
-
-    if data == "ai_safe":
-
-        set_setting(
-            "ai_mode",
-            "SAFE"
-        )
-
-
-    elif data == "ai_normal":
-
-        set_setting(
-            "ai_mode",
-            "NORMAL"
-        )
-
-
-    elif data == "ai_aggressive":
-
-        set_setting(
-            "ai_mode",
-            "AGGRESSIVE"
-        )
-
-
-
-
-
-    elif data == "score_up":
-
-        score = int(
-            get_setting("minimum_score")
-        )
-
-        score += 5
-
-        set_setting(
-            "minimum_score",
-            score
-        )
-
-
-
-
-    elif data == "score_down":
-
-        score = int(
-            get_setting("minimum_score")
-        )
-
-        score -= 5
-
-        if score < 0:
-            score = 0
-
-
-        set_setting(
-            "minimum_score",
-            score
-        )
-
-
-
-
-    elif data == "signal":
-
-        if get_setting("signal_status") == "OFF":
-
-            await query.message.reply_text(
-                "⛔ Signal system disabled"
-            )
-
-            return
-
-
-
-        await query.message.reply_text(
-            "🔍 Analyzing XAUUSD..."
-        )
-
-
-        df = get_gold_candles(
-            "5min"
-        )
-
-
-        if df is None:
-
-            await query.message.reply_text(
-                "❌ Data Error"
-            )
-
-            return
-
-
-
-        analysis = ict_analysis(df)
-
-
-        signal = create_signal(
-            df,
-            analysis
-        )
-
-
-
-        if signal:
-
-            save_trade(signal)
-
-
-            await query.message.reply_text(
+        await update.message.reply_text(
 f"""
 🚨 SIGNAL
 
@@ -521,26 +269,41 @@ TP:
 Score:
 {signal['score']}
 """
-            )
-
-        else:
-
-            await query.message.reply_text(
-                "❌ No Setup"
-            )
-
-
-        return
-
-
-
+        )
 
 
     else:
 
+
+        await update.message.reply_text(
+            "❌ No Setup"
+        )
+
+
+
+
+
+# ================= BUTTON HANDLER =================
+
+
+async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
+
+    query = update.callback_query
+
+    await query.answer()
+
+
+    data = query.data
+
+
+
+
+
+    if data == "back":
+
         await query.edit_message_text(
-            "⚙️ این بخش در حال توسعه است",
-            reply_markup=admin_keyboard()
+            "🤖 Surpri3e AI Scanner",
+            reply_markup=user_keyboard()
         )
 
         return
@@ -549,8 +312,74 @@ Score:
 
 
 
-    await query.edit_message_text(
-        f"""
+    if query.from_user.id == ADMIN_ID:
+
+
+
+        if data == "dashboard":
+
+            await query.edit_message_text(
+                dashboard(),
+                reply_markup=admin_keyboard()
+            )
+
+            return
+
+
+
+
+        if data == "users":
+
+            await query.edit_message_text(
+f"""
+👥 USERS
+
+Total:
+{get_users_count()}
+""",
+                reply_markup=admin_keyboard()
+            )
+
+            return
+
+
+
+
+
+        if data == "analytics":
+
+            await query.edit_message_text(
+                create_report(),
+                reply_markup=admin_keyboard()
+            )
+
+            return
+
+
+
+
+
+        if data == "signal_control":
+
+            status = toggle_signal()
+
+
+            await query.edit_message_text(
+f"""
+🚀 Signal Control
+
+
+Signal Status:
+{status}
+""",
+                reply_markup=admin_keyboard()
+            )
+
+            return
+                    if data == "ai_settings":
+
+            await query.edit_message_text(
+f"""
 🧠 AI SETTINGS
 
 
@@ -561,7 +390,97 @@ Mode:
 Score:
 {get_setting("minimum_score")}
 """,
-        reply_markup=ai_keyboard()
+                reply_markup=admin_keyboard()
+            )
+
+            return
+
+
+
+
+
+        if data == "channel_lock":
+
+            current = get_setting(
+                "channel_lock"
+            )
+
+
+            new_status = "OFF"
+
+
+            if current == "OFF":
+
+                new_status = "ON"
+
+
+            set_setting(
+                "channel_lock",
+                new_status
+            )
+
+
+            await query.edit_message_text(
+f"""
+🔒 Channel Lock
+
+
+Status:
+{new_status}
+""",
+                reply_markup=admin_keyboard()
+            )
+
+            return
+
+
+
+
+
+    if data == "signal":
+
+        if get_setting("signal_status") == "OFF":
+
+            await query.message.reply_text(
+                "⛔ Signal is disabled"
+            )
+
+            return
+
+
+        await query.message.reply_text(
+            "🔍 Analyzing XAUUSD..."
+        )
+
+
+        await send_signal(
+            query
+        )
+
+        return
+
+
+
+
+
+
+    if data == "performance":
+
+        await query.edit_message_text(
+            create_report(),
+            reply_markup=user_keyboard()
+        )
+
+        return
+
+
+
+
+
+
+    await query.edit_message_text(
+        "⚙️ این بخش آماده‌سازی می‌شود",
+        reply_markup=admin_keyboard()
     )
 
 
@@ -583,32 +502,18 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text.startswith("SIGNAL"):
 
-        df = get_gold_candles(
-            "5min"
-        )
-
-        analysis = ict_analysis(df)
-
-
-        signal = create_signal(
-            df,
-            analysis
-        )
-
-
-        if signal:
-
-            save_trade(signal)
+        if get_setting("signal_status") == "OFF":
 
             await update.message.reply_text(
-                str(signal)
+                "⛔ Signal Disabled"
             )
 
-        else:
+            return
 
-            await update.message.reply_text(
-                "❌ No Setup"
-            )
+
+        await send_signal(
+            update
+        )
 
 
 
@@ -619,10 +524,16 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 create_users_table()
 
+create_database()
+
 init_settings()
 
 
-app = Application.builder().token(TOKEN).build()
+
+app = Application.builder().token(
+    TOKEN
+).build()
+
 
 
 app.add_handler(
@@ -633,12 +544,14 @@ app.add_handler(
 )
 
 
+
 app.add_handler(
     CommandHandler(
         "admin",
         admin
     )
 )
+
 
 
 app.add_handler(
@@ -648,12 +561,14 @@ app.add_handler(
 )
 
 
+
 app.add_handler(
     MessageHandler(
         filters.TEXT,
         handler
     )
 )
+
 
 
 app.run_polling()
