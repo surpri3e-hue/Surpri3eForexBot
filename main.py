@@ -9,6 +9,7 @@ from ict import ict_analysis
 from signals import create_signal
 from database import save_trade
 from report import create_report
+from chart import create_chart
 
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -43,18 +44,14 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
 
-
     if not text.startswith("SIGNAL"):
         return
-
 
 
     tf = text.replace("SIGNAL ", "")
 
 
-
     intervals = {
-
         "M1": "1min",
         "M5": "5min",
         "M15": "15min",
@@ -64,9 +61,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "D1": "1day",
         "W1": "1week",
         "MN1": "1month"
-
     }
-
 
 
     if tf not in intervals:
@@ -80,7 +75,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
     loading = await update.message.reply_text(
-
 f"""
 🤖 Surpri3e AI Scanner
 
@@ -88,110 +82,67 @@ XAUUSD {tf}
 
 Analyzing Market...
 
-[░░░░░░░░░░] 0%
-
-Time:
-0 / 30 minutes
-
-🔍 Searching ICT setup...
+🔍 Searching ICT Setup...
 """
-
     )
 
 
-
     signal = None
+    df = None
 
 
 
     for minute in range(30):
-
 
         df = get_gold_candles(
             intervals[tf]
         )
 
 
+        if df is not None:
 
-        if df is None:
 
-            await loading.edit_text(
+            analysis = ict_analysis(df)
 
-f"""
-⚠️ Data unavailable
 
-XAUUSD {tf}
-
-Retrying...
-
-Time:
-{minute+1}/30 minutes
-"""
-
+            signal = create_signal(
+                df,
+                analysis
             )
 
-            await asyncio.sleep(60)
 
-            continue
-
-
-
-        analysis = ict_analysis(df)
-
-
-
-        signal = create_signal(
-            df,
-            analysis
-        )
-
-
-
-        if signal:
-
-            break
-
-
-
-        progress = int(((minute+1)/30)*100)
-
-        blocks = int(progress/10)
-
-        bar = "█"*blocks + "░"*(10-blocks)
+            if signal:
+                break
 
 
 
         await loading.edit_text(
-
 f"""
 🤖 Surpri3e AI Scanner
 
 XAUUSD {tf}
 
-[{bar}] {progress}%
-
-
-Time:
+Progress:
 {minute+1}/30 minutes
 
+🔍 Scanning ICT Model...
 
-Checking:
+Liquidity:
+⏳ Checking
 
-✅ Price Data
-⏳ Liquidity
-⏳ CHoCH
-⏳ FVG
-⏳ Entry Model
+Structure:
+⏳ Checking
 
-Waiting for high quality setup...
+FVG:
+⏳ Checking
+
+Entry:
+⏳ Waiting
 """
-
         )
 
 
-
         await asyncio.sleep(60)
-
 
 
 
@@ -202,65 +153,61 @@ Waiting for high quality setup...
         save_trade(signal)
 
 
+        chart_file = create_chart(
+            df,
+            signal,
+            tf
+        )
+
 
         result = f"""
-
 🚨 HIGH QUALITY ICT SIGNAL
 
-
 XAUUSD {tf}
-
 
 Direction:
 {signal['direction']}
 
-
 Entry:
 {signal['entry']}
-
 
 SL:
 {signal['sl']}
 
-
 TP:
 {signal['tp']}
-
 
 RR:
 {signal['rr']}
 
-
 Reason:
-
 {', '.join(signal['reason'])}
-
 """
 
+
+        await loading.edit_text(result)
+
+
+        with open(chart_file, "rb") as photo:
+
+            await update.message.reply_photo(
+                photo=photo,
+                caption="📊 ICT Chart"
+            )
 
 
     else:
 
 
-        result = f"""
-
+        await loading.edit_text(
+f"""
 ❌ No High Quality Setup
-
 
 XAUUSD {tf}
 
-
 30 minute scan completed.
-
-
-No valid ICT entry found.
-
 """
-
-
-
-    await loading.edit_text(result)
-
+        )
 
 
 
