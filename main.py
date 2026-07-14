@@ -18,13 +18,9 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     await update.message.reply_text(
         "🤖 Surpri3e Forex Bot Online\n\n"
-        "Commands:\n"
-        "Signal M1\n"
         "Signal M5\n"
         "Signal M15\n"
-        "Signal M30\n"
         "Signal H1\n"
-        "Signal H4\n"
         "Status"
     )
 
@@ -36,11 +32,8 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "STATUS":
 
-        await update.message.reply_text(
-            create_report()
-        )
+        await update.message.reply_text(create_report())
         return
-
 
 
     if not text.startswith("SIGNAL"):
@@ -66,7 +59,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if tf not in intervals:
 
         await update.message.reply_text(
-            "❌ Invalid timeframe"
+            "❌ تایم فریم اشتباه است"
         )
         return
 
@@ -78,18 +71,18 @@ f"""
 
 XAUUSD {tf}
 
-Analyzing Market...
+🔍 Starting analysis...
 
 [░░░░░░░░░░] 0%
 
-Time:
-0 / 30 minutes
-
-Checking:
+Searching:
 ⬜ Liquidity
 ⬜ CHoCH
 ⬜ FVG
-⬜ Entry Model
+⬜ Entry
+
+Time:
+0/30 min
 """
     )
 
@@ -98,43 +91,6 @@ Checking:
 
 
     for minute in range(30):
-
-
-        progress = int(((minute + 1) / 30) * 100)
-
-        filled = int(progress / 10)
-
-        bar = "█" * filled + "░" * (10-filled)
-
-
-
-        await loading.edit_text(
-f"""
-🤖 Surpri3e AI Scanner
-
-XAUUSD {tf}
-
-[{bar}] {progress}%
-
-Time:
-{minute+1} / 30 minutes
-
-🔍 Scanning ICT Model...
-
-Liquidity:
-⏳ Checking
-
-Structure:
-⏳ Checking
-
-FVG:
-⏳ Checking
-
-Entry:
-⏳ Waiting
-"""
-        )
-
 
 
         df = get_gold_candles(
@@ -147,7 +103,6 @@ Entry:
 
             analysis = ict_analysis(df)
 
-
             signal = create_signal(
                 df,
                 analysis
@@ -159,7 +114,40 @@ Entry:
 
 
 
+        filled = int(((minute+1)/30)*10)
+
+        bar = "█"*filled + "░"*(10-filled)
+
+
+
+        await loading.edit_text(
+f"""
+🤖 Surpri3e AI Scanner
+
+XAUUSD {tf}
+
+[{bar}]
+
+Progress:
+{((minute+1)*100)//30}%
+
+Time:
+{minute+1}/30 min
+
+
+Status:
+🔍 Searching ICT setup...
+
+Liquidity: checking
+Structure: checking
+FVG: checking
+Entry: waiting
+"""
+        )
+
+
         await asyncio.sleep(60)
+
 
 
 
@@ -202,13 +190,10 @@ Reason:
 
 XAUUSD {tf}
 
-30 minute scan completed.
+30 minute scan finished.
 
-No valid ICT entry found.
-
-Waiting for next command.
+No valid entry found.
 """
-
 
 
     await loading.edit_text(result)
