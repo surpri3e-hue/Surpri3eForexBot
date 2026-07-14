@@ -1,82 +1,150 @@
-import json
-import os
+import sqlite3
 from datetime import datetime
 
 
-FILE = "trades.json"
+DB = "trades.db"
 
 
-def load_trades():
 
-    if not os.path.exists(FILE):
-        return []
+def connect():
 
-    with open(FILE, "r") as f:
-        return json.load(f)
+    return sqlite3.connect(DB)
+
 
 
 
 def save_trade(signal):
 
-    trades = load_trades()
+    conn = connect()
 
-    trade = {
-        "time": datetime.now().strftime("%Y-%m-%d %H:%M"),
-        "direction": signal["direction"],
-        "entry": signal["entry"],
-        "sl": signal["sl"],
-        "tp": signal["tp"],
-        "rr": signal["rr"],
-        "result": "ACTIVE"
-    }
-
-    trades.append(trade)
-
-    with open(FILE, "w") as f:
-        json.dump(trades, f, indent=4)
+    cur = conn.cursor()
 
 
+    cur.execute("""
+    CREATE TABLE IF NOT EXISTS trades(
 
-def update_result(index, result):
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
 
-    trades = load_trades()
+        time TEXT,
 
-    if index < len(trades):
-        trades[index]["result"] = result
+        direction TEXT,
 
-    with open(FILE, "w") as f:
-        json.dump(trades, f, indent=4)
+        entry REAL,
+
+        sl REAL,
+
+        tp REAL,
+
+        score INTEGER,
+
+        result TEXT
+
+    )
+    """)
 
 
 
-def get_stats():
+    cur.execute("""
+    INSERT INTO trades
+    (
+    time,
+    direction,
+    entry,
+    sl,
+    tp,
+    score,
+    result
+    )
 
-    trades = load_trades()
+    VALUES(?,?,?,?,?,?,?)
 
-    total = len(trades)
+    """,
 
-    wins = len([t for t in trades if t["result"] == "TP"])
-    losses = len([t for t in trades if t["result"] == "SL"])
+    (
 
-    winrate = 0
+    datetime.now().strftime(
+        "%Y-%m-%d %H:%M"
+    ),
 
-    if total > 0:
-        winrate = round((wins / total) * 100, 2)
+    signal["direction"],
+
+    signal["entry"],
+
+    signal["sl"],
+
+    signal["tp"],
+
+    signal.get(
+        "score",
+        0
+    ),
+
+    "ACTIVE"
+
+    ))
 
 
-    profit_factor = 0
+    conn.commit()
 
-    if losses > 0:
-        profit_factor = round(
-            (wins * 2) / losses,
-            2
-        )
+    conn.close()
 
 
-    return {
-        "total": total,
-        "wins": wins,
-        "losses": losses,
-        "winrate": winrate,
-        "profit_factor": profit_factor
-    }
+
+
+
+
+def get_trades():
+
+    conn = connect()
+
+    cur = conn.cursor()
+
+
+    cur.execute(
+        "SELECT * FROM trades"
+    )
+
+
+    data = cur.fetchall()
+
+
+    conn.close()
+
+
+    return data
+
+
+
+
+
+def update_result(
+    trade_id,
+    result
+):
+
+    conn = connect()
+
+    cur = conn.cursor()
+
+
+    cur.execute(
+"""
+UPDATE trades
+
+SET result=?
+
+WHERE id=?
+
+""",
+
+(
+result,
+trade_id
+)
+
+)
+
+
+    conn.commit()
+
+    conn.close()
