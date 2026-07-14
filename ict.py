@@ -1,31 +1,14 @@
 def find_fvg(df):
 
-    # فقط FVG های نزدیک قیمت را بررسی می‌کنیم
-
-    for i in range(len(df)-3, len(df)):
-
-        # Bullish FVG
+    for i in range(len(df)-5, len(df)):
 
         if df["low"].iloc[i] > df["high"].iloc[i-2]:
-
-            return {
-                "type": "BUY"
-            }
-
-
-
-        # Bearish FVG
+            return "BUY"
 
         if df["high"].iloc[i] < df["low"].iloc[i-2]:
-
-            return {
-                "type": "SELL"
-            }
-
+            return "SELL"
 
     return None
-
-
 
 
 
@@ -33,249 +16,106 @@ def liquidity_sweep(df):
 
     last = df.iloc[-1]
 
-
-    highs = df["high"].iloc[-15:-1]
-
-    lows = df["low"].iloc[-15:-1]
+    high = df["high"].iloc[-20:-1].max()
+    low = df["low"].iloc[-20:-1].min()
 
 
-
-    if last["low"] < lows.min() and last["close"] > lows.min():
-
+    if last["low"] < low and last["close"] > low:
         return "BUY"
 
 
-
-    if last["high"] > highs.max() and last["close"] < highs.max():
-
+    if last["high"] > high and last["close"] < high:
         return "SELL"
-
 
 
     return None
 
 
 
-
-
-def market_structure(df):
+def structure(df):
 
     last = df.iloc[-1]
 
-
-    recent_high = df["high"].iloc[-6:-1].max()
-
-    recent_low = df["low"].iloc[-6:-1].min()
+    high = df["high"].iloc[-5:-1].max()
+    low = df["low"].iloc[-5:-1].min()
 
 
-
-    if last["close"] > recent_high:
-
+    if last["close"] > high:
         return "BUY"
 
 
-
-    if last["close"] < recent_low:
-
+    if last["close"] < low:
         return "SELL"
 
 
-
     return None
-
-
-
-
-
-def displacement(df):
-
-    last = df.iloc[-1]
-
-
-    body = abs(
-        last["close"] - last["open"]
-    )
-
-
-    total = last["high"] - last["low"]
-
-
-    if total == 0:
-
-        return False
-
-
-
-    if body / total >= 0.5:
-
-        return True
-
-
-
-    return False
-
-
 
 
 
 def ict_analysis(df):
 
-
-    buy_score = 0
-    sell_score = 0
-
+    buy = 0
+    sell = 0
 
     buy_reason = []
     sell_reason = []
 
 
-
     fvg = find_fvg(df)
-
     sweep = liquidity_sweep(df)
-
-    structure = market_structure(df)
-
+    bos = structure(df)
 
 
 
-
-    # FVG
-
-    if fvg:
-
-
-        if fvg["type"] == "BUY":
-
-            buy_score += 30
-
-            buy_reason.append(
-                "Bullish FVG"
-            )
+    if fvg == "BUY":
+        buy += 25
+        buy_reason.append("FVG")
 
 
-        else:
-
-            sell_score += 30
-
-            sell_reason.append(
-                "Bearish FVG"
-            )
+    if fvg == "SELL":
+        sell += 25
+        sell_reason.append("FVG")
 
 
-
-
-
-
-    # Liquidity
 
     if sweep == "BUY":
-
-        buy_score += 40
-
-        buy_reason.append(
-            "Liquidity Sweep"
-        )
+        buy += 40
+        buy_reason.append("Liquidity Sweep")
 
 
-
-    elif sweep == "SELL":
-
-        sell_score += 40
-
-        sell_reason.append(
-            "Liquidity Sweep"
-        )
+    if sweep == "SELL":
+        sell += 40
+        sell_reason.append("Liquidity Sweep")
 
 
 
+    if bos == "BUY":
+        buy += 35
+        buy_reason.append("BOS")
+
+
+    if bos == "SELL":
+        sell += 35
+        sell_reason.append("BOS")
 
 
 
-
-    # Structure
-
-    if structure == "BUY":
-
-        buy_score += 20
-
-        buy_reason.append(
-            "BOS"
-        )
-
-
-
-    elif structure == "SELL":
-
-        sell_score += 20
-
-        sell_reason.append(
-            "BOS"
-        )
-
-
-
-
-
-
-    # Candle strength
-
-    if displacement(df):
-
-
-        if buy_score > sell_score:
-
-            buy_score += 10
-
-            buy_reason.append(
-                "Displacement"
-            )
-
-
-        elif sell_score > buy_score:
-
-            sell_score += 10
-
-            sell_reason.append(
-                "Displacement"
-            )
-
-
-
-
-
-
-
-    if buy_score >= 60:
+    if buy >= 50:
 
         return {
-
             "direction":"BUY",
-
-            "score":buy_score,
-
+            "score":buy,
             "reason":buy_reason
-
         }
 
 
-
-
-
-    if sell_score >= 60:
+    if sell >= 50:
 
         return {
-
             "direction":"SELL",
-
-            "score":sell_score,
-
+            "score":sell,
             "reason":sell_reason
-
         }
-
-
-
 
 
     return None
