@@ -1,5 +1,4 @@
+
 python-telegram-bot
-yfinance
+requests
 pandas
-mplfinance
-matplotlib
