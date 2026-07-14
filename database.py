@@ -13,10 +13,10 @@ def connect():
 
 
 
+
 def create_database():
 
     conn = connect()
-
     cursor = conn.cursor()
 
 
@@ -46,9 +46,7 @@ def create_database():
 
 
     conn.commit()
-
     conn.close()
-
 
 
 
@@ -57,7 +55,6 @@ def create_database():
 def save_trade(signal):
 
     conn = connect()
-
     cursor = conn.cursor()
 
 
@@ -69,10 +66,12 @@ def save_trade(signal):
         entry,
         sl,
         tp,
-        score
+        score,
+        result
     )
 
-    VALUES (?,?,?,?,?,?)
+    VALUES (?,?,?,?,?,?,?)
+
     """,
 
     (
@@ -91,15 +90,40 @@ def save_trade(signal):
         signal.get(
             "score",
             0
-        )
+        ),
+
+        "OPEN"
 
     ))
 
 
     conn.commit()
+    conn.close()
+
+
+
+
+
+def get_trades():
+
+    conn = connect()
+    cursor = conn.cursor()
+
+
+    cursor.execute("""
+    SELECT *
+    FROM trades
+    ORDER BY id DESC
+    """)
+
+
+    rows = cursor.fetchall()
+
 
     conn.close()
 
+
+    return rows
 
 
 
@@ -108,7 +132,6 @@ def save_trade(signal):
 def update_result(trade_id, result):
 
     conn = connect()
-
     cursor = conn.cursor()
 
 
@@ -133,6 +156,7 @@ def update_result(trade_id, result):
         profit=?
 
     WHERE id=?
+
     """,
 
     (
@@ -144,10 +168,7 @@ def update_result(trade_id, result):
 
 
     conn.commit()
-
     conn.close()
-
-
 
 
 
@@ -156,7 +177,6 @@ def update_result(trade_id, result):
 def get_statistics():
 
     conn = connect()
-
     cursor = conn.cursor()
 
 
@@ -179,32 +199,34 @@ def get_statistics():
 
     losses = 0
 
-    profit = 0
+    total_profit = 0
 
-    loss = 0
+    total_loss = 0
 
 
 
-    for r,p in rows:
+    for result, profit in rows:
 
-        if r == "TP":
+
+        if result == "TP":
 
             wins += 1
 
-            profit += p
+            total_profit += profit
 
 
 
-        elif r == "SL":
+        elif result == "SL":
 
             losses += 1
 
-            loss += abs(p)
+            total_loss += abs(profit)
+
+
 
 
 
     winrate = 0
-
 
     if total > 0:
 
@@ -215,13 +237,13 @@ def get_statistics():
 
 
 
-    pf = 0
 
+    profit_factor = 0
 
-    if loss > 0:
+    if total_loss > 0:
 
-        pf = round(
-            profit / loss,
+        profit_factor = round(
+            total_profit / total_loss,
             2
         )
 
@@ -229,7 +251,7 @@ def get_statistics():
 
     return {
 
-        "trades": total,
+        "total": total,
 
         "wins": wins,
 
@@ -237,6 +259,31 @@ def get_statistics():
 
         "winrate": winrate,
 
-        "profit_factor": pf
+        "profit_factor": profit_factor
 
     }
+
+
+
+
+
+def get_open_trades():
+
+    conn = connect()
+    cursor = conn.cursor()
+
+
+    cursor.execute("""
+    SELECT *
+    FROM trades
+    WHERE result='OPEN'
+    """)
+
+
+    rows = cursor.fetchall()
+
+
+    conn.close()
+
+
+    return rows
