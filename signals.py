@@ -12,7 +12,6 @@ def ict_analysis_with_explanation(df):
         current = close[-1]
         prev = close[-2]
 
-        # میانگین متحرک
         ma5 = np.mean(close[-5:])
         ma10 = np.mean(close[-10:]) if len(close) >= 10 else ma5
 
@@ -20,7 +19,6 @@ def ict_analysis_with_explanation(df):
         score = 0
         direction = None
 
-        # تشخیص روند
         if current > ma5 and ma5 > ma10:
             direction = "BUY"
             reasons.append("شکست سقف قبلی (BOS UP)")
@@ -32,9 +30,18 @@ def ict_analysis_with_explanation(df):
             reasons.append("میانگین متحرک نزولی")
             score += 40
         else:
-            return None, None
+            price_change = ((current - prev) / prev) * 100
+            if price_change > 0.05:
+                direction = "BUY"
+                reasons.append("افزایش قیمت لحظه‌ای")
+                score += 30
+            elif price_change < -0.05:
+                direction = "SELL"
+                reasons.append("کاهش قیمت لحظه‌ای")
+                score += 30
+            else:
+                return None, None
 
-        # نواحی عرضه/تقاضا
         recent_high = max(high[-5:])
         recent_low = min(low[-5:])
 
@@ -45,29 +52,11 @@ def ict_analysis_with_explanation(df):
             reasons.append(f"نزدیک به ناحیه عرضه در {recent_high:.2f}")
             score += 25
 
-        # FVG
-        if direction == "BUY":
-            reasons.append("FVG صعودی شناسایی شد")
-            score += 20
-        else:
-            reasons.append("FVG نزولی شناسایی شد")
-            score += 20
-
-        # محاسبه Entry/SL/TP
-        if direction == "BUY":
-            entry = round(current + 0.5, 2)
-            sl = round(current - 5, 2)
-            tp = round(current + 10, 2)
-        else:
-            entry = round(current - 0.5, 2)
-            sl = round(current + 5, 2)
-            tp = round(current - 10, 2)
-
         signal = {
             'direction': direction,
-            'entry': entry,
-            'sl': sl,
-            'tp': tp,
+            'entry': round(current, 2),
+            'sl': round(current - 5, 2) if direction == "BUY" else round(current + 5, 2),
+            'tp': round(current + 10, 2) if direction == "BUY" else round(current - 10, 2),
             'score': min(score, 100)
         }
 
@@ -86,15 +75,16 @@ def create_signal(df=None, analysis=None):
     if analysis and isinstance(analysis, dict):
         return {
             'direction': analysis.get('direction', 'BUY'),
-            'entry': analysis.get('entry', 4054),
-            'sl': analysis.get('sl', 4049),
-            'tp': analysis.get('tp', 4064),
+            'entry': analysis.get('entry', 0),
+            'sl': analysis.get('sl', 0),
+            'tp': analysis.get('tp', 0),
             'score': analysis.get('score', 70)
         }
+    
     return {
         'direction': 'BUY',
-        'entry': 4054,
-        'sl': 4049,
-        'tp': 4064,
+        'entry': 0,
+        'sl': 0,
+        'tp': 0,
         'score': 70
     }
