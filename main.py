@@ -4,6 +4,7 @@ import io
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+from datetime import datetime, timedelta
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -119,75 +120,53 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ تابع تولید چارت با ریسک به ریوارد ============
-def generate_chart_with_rr(df, signal, timeframe):
-    """تولید چارت با خطوط Entry, SL, TP و نمایش RR"""
+# ============ تابع تولید چارت ============
+def generate_chart(df, signal, timeframe):
+    """تولید چارت ساده با خطوط سیگنال"""
     try:
-        df_copy = df.copy()
-        df_copy = df_copy.tail(50)
+        df_copy = df.tail(30).copy()
         
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1,
-            figsize=(14, 10),
-            gridspec_kw={'height_ratios': [3, 1]},
-            sharex=True
-        )
+        fig, ax = plt.subplots(figsize=(12, 7))
         
-        # کندل‌ها
-        width = 0.6
-        up = df_copy[df_copy['close'] >= df_copy['open']]
-        down = df_copy[df_copy['close'] < df_copy['open']]
-        
-        ax1.bar(up.index, up['close'] - up['open'], width, bottom=up['open'], color='#26a69a')
-        ax1.bar(up.index, up['high'] - up['close'], width/10, bottom=up['close'], color='#26a69a')
-        ax1.bar(up.index, up['low'] - up['open'], width/10, bottom=up['open'], color='#26a69a')
-        
-        ax1.bar(down.index, down['close'] - down['open'], width, bottom=down['open'], color='#ef5350')
-        ax1.bar(down.index, down['high'] - down['open'], width/10, bottom=down['open'], color='#ef5350')
-        ax1.bar(down.index, down['low'] - down['close'], width/10, bottom=down['close'], color='#ef5350')
+        # رسم قیمت
+        ax.plot(df_copy.index, df_copy['Close'], color='black', linewidth=1.5, label='Price')
+        ax.fill_between(df_copy.index, df_copy['Close'].min() - 5, df_copy['Close'], 
+                        alpha=0.2, color='blue')
         
         # خطوط سیگنال
         entry = signal['entry']
         sl = signal['sl']
         tp = signal['tp']
         
-        ax1.axhline(y=entry, color='blue', linestyle='--', linewidth=2, label=f'Entry: {entry:.2f}', alpha=0.8)
-        ax1.axhline(y=sl, color='red', linestyle='--', linewidth=2, label=f'SL: {sl:.2f}', alpha=0.8)
-        ax1.axhline(y=tp, color='green', linestyle='--', linewidth=2, label=f'TP: {tp:.2f}', alpha=0.8)
+        ax.axhline(y=entry, color='blue', linestyle='--', linewidth=2, 
+                   label=f'Entry: {entry:.2f}')
+        ax.axhline(y=sl, color='red', linestyle='--', linewidth=2, 
+                   label=f'SL: {sl:.2f}')
+        ax.axhline(y=tp, color='green', linestyle='--', linewidth=2, 
+                   label=f'TP: {tp:.2f}')
         
         # نواحی ریسک و ریوارد
-        ax1.fill_between(df_copy.index, entry, sl, color='red', alpha=0.15, label='Risk Zone')
-        ax1.fill_between(df_copy.index, entry, tp, color='green', alpha=0.15, label='Reward Zone')
+        ax.axhspan(min(entry, sl), max(entry, sl), alpha=0.15, color='red', label='Risk')
+        ax.axhspan(min(entry, tp), max(entry, tp), alpha=0.15, color='green', label='Reward')
         
-        ax1.set_title(f'XAUUSD - {timeframe}', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Price (USD)', fontsize=12)
-        ax1.legend(loc='upper left', fontsize=10)
-        ax1.grid(True, alpha=0.3)
-        
-        # حجم
-        colors = ['#26a69a' if df_copy['close'].iloc[i] >= df_copy['open'].iloc[i] else '#ef5350' 
-                  for i in range(len(df_copy))]
-        ax2.bar(df_copy.index, df_copy['volume'], color=colors, alpha=0.7)
-        ax2.set_ylabel('Volume', fontsize=12)
-        ax2.grid(True, alpha=0.3)
+        # تنظیمات
+        ax.set_title(f'XAUUSD - {timeframe}', fontsize=14, fontweight='bold')
+        ax.set_ylabel('Price (USD)', fontsize=12)
+        ax.legend(loc='upper left', fontsize=10)
+        ax.grid(True, alpha=0.3)
         
         # محاسبه RR
         risk = abs(entry - sl)
         reward = abs(tp - entry)
         rr = round(reward / risk, 2) if risk > 0 else 0
         
-        # نمایش RR
-        ax1.text(0.02, 0.98, f'Risk/Reward: 1:{rr}', transform=ax1.transAxes,
-                 fontsize=12, fontweight='bold', color='white',
-                 bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.7))
-        
-        # نمایش جهت
         direction = 'BUY' if signal['direction'] == 'BUY' else 'SELL'
         color = 'green' if direction == 'BUY' else 'red'
-        ax1.text(0.98, 0.98, f'Signal: {direction}', transform=ax1.transAxes,
-                 fontsize=12, fontweight='bold', color=color,
-                 bbox=dict(boxstyle='round,pad=0.5', facecolor='white', alpha=0.8),
-                 horizontalalignment='right')
+        
+        info = f'Signal: {direction} | RR: 1:{rr} | Score: {signal.get("score", 0)}'
+        ax.text(0.02, 0.98, info, transform=ax.transAxes,
+                fontsize=11, fontweight='bold', color='white',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
         
         plt.tight_layout()
         
@@ -204,13 +183,12 @@ def generate_chart_with_rr(df, signal, timeframe):
 
 # ============ ارسال سیگنال با چارت ============
 async def send_signal_with_chart(target, trade_id, signal, df, timeframe):
-    rr = 0
-    chart_buf, rr = generate_chart_with_rr(df, signal, timeframe)
+    chart_buf, rr = generate_chart(df, signal, timeframe)
     
     message = (
         f"🚨 **سیگنال جدید**\n\n"
         f"⏱️ **تایم‌فریم:** {timeframe}\n"
-        f"💰 **قیمت فعلی:** {df['close'].iloc[-1]:.2f}\n\n"
+        f"💰 **قیمت فعلی:** {df['Close'].iloc[-1]:.2f}\n\n"
         f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
         f"📍 **ورود:** {signal['entry']:.2f}\n"
         f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
@@ -241,7 +219,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_activity(user_id)
     
     await update.message.reply_text(
-        "🤖 **Surpri3e AI Scanner**\n\nبه ربات سیگنال‌دهی طلا خوش آمدید!\n\n"
+        "🤖 **Surpri3e AI Scanner**\n\n"
+        "به ربات سیگنال‌دهی طلا خوش آمدید!\n\n"
         "🔹 برای دریافت سیگنال روی دکمه 🚨 کلیک کنید\n"
         "🔹 تایم‌فریم مورد نظر را انتخاب کنید\n"
         "🔹 آمار عملکرد خود را در 📊 ببینید\n\n"
@@ -419,7 +398,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "dashboard":
         if query.from_user.id != ADMIN_ID:
             return
-        await query.edit_message_text(dashboard(), reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            dashboard(),
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "users":
@@ -473,13 +456,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "ai_settings":
         if query.from_user.id != ADMIN_ID:
             return
-        await query.edit_message_text(ai_status(), reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            ai_status(),
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "logs":
         if query.from_user.id != ADMIN_ID:
             return
-        await query.edit_message_text(logs_text(), reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            logs_text(),
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
 # ============ پیام‌های متنی ============
