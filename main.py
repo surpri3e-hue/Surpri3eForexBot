@@ -1,6 +1,7 @@
 import os
 import logging
 from datetime import datetime
+import pytz
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -15,7 +16,7 @@ from telegram.ext import (
     filters
 )
 
-from market import get_current_price, get_gold_candles
+from market import get_current_price, get_gold_candles, get_tehran_time
 from signals import create_signal, ict_analysis_with_explanation
 from ai_deepseek import analyze_with_deepseek
 
@@ -177,6 +178,9 @@ def ai_chat_keyboard():
 
 # ============ ارسال سیگنال ============
 async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe):
+    current_price = get_current_price()
+    tehran_time = get_tehran_time()
+    
     ict_text = f"""
 📊 **تحلیل ICT:**
 
@@ -205,8 +209,8 @@ async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe)
 {ai_text}
 
 ⏱️ **تایم‌فریم:** {timeframe}
-💰 **قیمت لحظه‌ای:** {df['Close'].iloc[-1]:.2f}
-📡 **زمان:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+💰 **قیمت لحظه‌ای:** {current_price if current_price else df['Close'].iloc[-1]:.2f}
+🕐 **زمان تهران:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
 
 👇 نتیجه معامله را انتخاب کنید:
 """
@@ -329,12 +333,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         try:
             price = get_current_price()
+            tehran_time = get_tehran_time()
+            
             if price:
                 await query.edit_message_text(
                     f"💰 **قیمت لحظه‌ای طلا**\n\n"
                     f"📊 **XAU/USD**\n\n"
                     f"💵 **قیمت:** {price:.2f} USD\n"
-                    f"🕐 **آخرین بروزرسانی:** {datetime.now().strftime('%H:%M:%S')}",
+                    f"🕐 **زمان تهران:** {tehran_time.strftime('%H:%M:%S')}",
                     reply_markup=user_keyboard(),
                     parse_mode='Markdown'
                 )
@@ -704,25 +710,79 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== ورودی‌های ادمین =====
     if context.user_data.get('admin_action'):
         action = context.user_data['admin_action']
-        action_handlers = {
-            'set_daily_signal': lambda: set_daily_signal_limit(int(text)) if text.isdigit() else None,
-            'set_rr': lambda: set_rr_ratio(int(text)) if text.isdigit() else None,
-            'set_timeframe': lambda: set_default_timeframe(text) if text in ['1min', '5min', '15min', '1h', '4h', '1d'] else None,
-            'set_rsi': lambda: set_rsi_limits(int(text.split()[0]), int(text.split()[1])) if len(text.split()) == 2 and all(x.isdigit() for x in text.split()) else None,
-            'set_referral_bonus': lambda: set_referral_bonus(int(text)) if text.isdigit() else None,
-            'set_referral_threshold': lambda: set_referral_threshold(int(text)) if text.isdigit() else None,
-            'vip_user': lambda: set_user_vip(int(text), True) if text.isdigit() else None,
-            'delete_user': lambda: delete_user(int(text)) if text.isdigit() else None
-        }
-
-        if action in action_handlers:
-            result = action_handlers[action]()
-            if result is not None:
-                await update.message.reply_text(f"✅ **انجام شد!**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+        
+        if action == 'set_daily_signal':
+            if text.isdigit():
+                set_daily_signal_limit(int(text))
+                await update.message.reply_text(f"✅ **تعداد سیگنال روزانه: {text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
-                await update.message.reply_text("❌ **ورودی نامعتبر!**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
-        return
+            return
+
+        if action == 'set_rr':
+            if text.isdigit():
+                set_rr_ratio(int(text))
+                await update.message.reply_text(f"✅ **نسبت RR: 1:{text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'set_timeframe':
+            if text in ['1min', '5min', '15min', '1h', '4h', '1d']:
+                set_default_timeframe(text)
+                await update.message.reply_text(f"✅ **تایم‌فریم: {text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **گزینه نامعتبر!**\n1min, 5min, 15min, 1h, 4h, 1d", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'set_rsi':
+            parts = text.split()
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                set_rsi_limits(int(parts[0]), int(parts[1]))
+                await update.message.reply_text(f"✅ **محدوده RSI: {parts[0]} - {parts[1]}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **دو عدد با فاصله وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'set_referral_bonus':
+            if text.isdigit():
+                set_referral_bonus(int(text))
+                await update.message.reply_text(f"✅ **پاداش هر رفرال: {text} سیگنال**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'set_referral_threshold':
+            if text.isdigit():
+                set_referral_threshold(int(text))
+                await update.message.reply_text(f"✅ **آستانه رفرال: {text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'vip_user':
+            if text.isdigit():
+                set_user_vip(int(text), True)
+                await update.message.reply_text(f"👑 **کاربر {text} VIP شد**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **لطفاً آیدی عددی وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'delete_user':
+            if text.isdigit():
+                delete_user(int(text))
+                await update.message.reply_text(f"🗑️ **کاربر {text} حذف شد**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            else:
+                await update.message.reply_text("❌ **لطفاً آیدی عددی وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            context.user_data['admin_action'] = None
+            return
 
     await update.message.reply_text(
         "❌ **لطفاً از دکمه‌ها استفاده کنید!**",
