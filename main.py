@@ -173,7 +173,7 @@ async def check_channel_membership(user_id, context):
     except:
         return False
 
-# ============ ارسال سیگنال (اصلاح شده) ============
+# ============ ارسال سیگنال (اصلاح شده با RR متغیر) ============
 async def send_signal(target, trade_id, signal, analysis, df, timeframe):
     current_price = get_current_price()
     tehran_time = get_tehran_time()
@@ -181,15 +181,20 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe):
     if not current_price:
         current_price = df['Close'].iloc[-1]
     
-    # ===== اصلاح Entry/SL/TP با قیمت لحظه‌ای =====
+    # ===== دریافت RR از تنظیمات =====
+    rr_ratio = float(get_setting('rr_ratio') or '2')
+    RISK = 5.0
+    REWARD = RISK * rr_ratio
+    
+    # ===== اصلاح Entry/SL/TP با RR متغیر =====
     if signal['direction'] == 'BUY':
         entry = round(current_price, 2)
-        sl = round(current_price - 5, 2)
-        tp = round(current_price + 10, 2)
+        sl = round(current_price - RISK, 2)
+        tp = round(current_price + REWARD, 2)
     else:
         entry = round(current_price, 2)
-        sl = round(current_price + 5, 2)
-        tp = round(current_price - 10, 2)
+        sl = round(current_price + RISK, 2)
+        tp = round(current_price - REWARD, 2)
     
     signal['entry'] = entry
     signal['sl'] = sl
@@ -202,6 +207,7 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe):
 **ورود:** {entry:.2f}
 **حد ضرر (SL):** {sl:.2f}
 **حد سود (TP):** {tp:.2f}
+**نسبت RR:** 1:{rr_ratio:.1f}
 
 **دلایل:**
 {chr(10).join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])}
@@ -476,7 +482,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"⚙️ **تنظیمات**\n\n"
             f"🔹 **تایم‌فریم:** {settings.get('default_timeframe', '5min')}\n"
             f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n"
-            f"🔹 **RR:** 1:2 (ثابت)",
+            f"🔹 **RR:** 1:{get_setting('rr_ratio') or '2'}",
             reply_markup=user_keyboard(),
             parse_mode='Markdown'
         )
@@ -709,11 +715,15 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if action == 'set_rr':
-            if text.isdigit():
-                set_rr_ratio(int(text))
-                await update.message.reply_text(f"✅ **نسبت RR: 1:{text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            else:
-                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            try:
+                value = float(text.replace(',', '.'))
+                if value <= 0:
+                    await update.message.reply_text("❌ **عدد باید بزرگتر از صفر باشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                else:
+                    set_rr_ratio(value)
+                    await update.message.reply_text(f"✅ **نسبت RR به 1:{value} تغییر کرد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            except:
+                await update.message.reply_text("❌ **لطفاً یک عدد معتبر وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
 
