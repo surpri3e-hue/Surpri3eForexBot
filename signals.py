@@ -1,4 +1,5 @@
 import numpy as np
+from database import get_setting
 
 def ict_analysis_with_explanation(df):
     try:
@@ -42,6 +43,22 @@ def ict_analysis_with_explanation(df):
             else:
                 return None, None
 
+        # ===== دریافت RR از تنظیمات =====
+        rr_ratio = float(get_setting('rr_ratio') or '2')
+        
+        # ===== محاسبه Entry/SL/TP با RR متغیر =====
+        RISK = 5.0
+        REWARD = RISK * rr_ratio
+        
+        if direction == "BUY":
+            entry = round(current, 2)
+            sl = round(current - RISK, 2)
+            tp = round(current + REWARD, 2)
+        else:
+            entry = round(current, 2)
+            sl = round(current + RISK, 2)
+            tp = round(current - REWARD, 2)
+
         recent_high = max(high[-5:])
         recent_low = min(low[-5:])
 
@@ -54,9 +71,9 @@ def ict_analysis_with_explanation(df):
 
         signal = {
             'direction': direction,
-            'entry': round(current, 2),
-            'sl': round(current - 5, 2) if direction == "BUY" else round(current + 5, 2),
-            'tp': round(current + 10, 2) if direction == "BUY" else round(current - 10, 2),
+            'entry': entry,
+            'sl': sl,
+            'tp': tp,
             'score': min(score, 100)
         }
 
