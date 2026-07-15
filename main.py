@@ -4,6 +4,7 @@ from datetime import datetime, timedelta
 import pytz
 import threading
 import time
+import asyncio
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -28,6 +29,8 @@ from database import (
     update_result,
     get_user_trades,
     get_statistics,
+    get_weekly_stats,
+    get_monthly_stats,
     get_setting,
     update_setting,
     add_user,
@@ -81,7 +84,8 @@ if not TOKEN:
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 
-# ============ کیبورد انتخاب زبان ============
+# ============ دکمه‌های شیشه‌ای ============
+
 def language_keyboard():
     keyboard = [
         [InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa")],
@@ -93,26 +97,22 @@ def language_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب سبک ============
 def style_keyboard(lang='fa'):
+    """کیبورد انتخاب سبک - فقط Surpri3e Strategy"""
     keyboard = [
-        [InlineKeyboardButton("📊 ICT", callback_data="style_ict")],
-        [InlineKeyboardButton("💰 Smart Money (SMC)", callback_data="style_smc")],
+        [InlineKeyboardButton("🚀 Surpri3e Strategy", callback_data="style_surpri3e")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب تایم‌فریم ============
 def timeframe_keyboard(lang='fa'):
     keyboard = [
         [
-            InlineKeyboardButton(get_text(lang, 'tf_1min'), callback_data="tf_1min"),
-            InlineKeyboardButton(get_text(lang, 'tf_5min'), callback_data="tf_5min"),
-            InlineKeyboardButton(get_text(lang, 'tf_15min'), callback_data="tf_15min")
+            InlineKeyboardButton(get_text(lang, 'tf_15min'), callback_data="tf_15min"),
+            InlineKeyboardButton(get_text(lang, 'tf_1h'), callback_data="tf_1h")
         ],
         [
-            InlineKeyboardButton(get_text(lang, 'tf_1h'), callback_data="tf_1h"),
             InlineKeyboardButton(get_text(lang, 'tf_4h'), callback_data="tf_4h"),
             InlineKeyboardButton(get_text(lang, 'tf_1d'), callback_data="tf_1d")
         ],
@@ -121,7 +121,6 @@ def timeframe_keyboard(lang='fa'):
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب RR (۱ تا ۱۰) ============
 def rr_keyboard(lang='fa'):
     keyboard = [
         [
@@ -143,31 +142,29 @@ def rr_keyboard(lang='fa'):
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد اصلی کاربر ============
 def user_keyboard(lang='fa'):
     keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'signal_btn'), callback_data="signal_menu")],
+        [InlineKeyboardButton("🚀 دریافت سیگنال", callback_data="signal_menu")],
         [
-            InlineKeyboardButton(get_text(lang, 'performance_btn'), callback_data="performance"),
-            InlineKeyboardButton(get_text(lang, 'history_btn'), callback_data="history")
+            InlineKeyboardButton("📊 عملکرد", callback_data="performance"),
+            InlineKeyboardButton("📜 تاریخچه", callback_data="history")
         ],
         [
-            InlineKeyboardButton(get_text(lang, 'price_btn'), callback_data="live_price"),
-            InlineKeyboardButton(get_text(lang, 'vip_btn'), callback_data="vip")
+            InlineKeyboardButton("💰 قیمت لحظه‌ای", callback_data="live_price"),
+            InlineKeyboardButton("💎 VIP", callback_data="vip")
         ],
         [
-            InlineKeyboardButton(get_text(lang, 'referral_btn'), callback_data="referral"),
-            InlineKeyboardButton(get_text(lang, 'settings_btn'), callback_data="settings")
+            InlineKeyboardButton("👥 رفرال", callback_data="referral"),
+            InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings")
         ],
         [
-            InlineKeyboardButton(get_text(lang, 'support_btn'), callback_data="support"),
+            InlineKeyboardButton("🆘 پشتیبانی", callback_data="support"),
             InlineKeyboardButton("🌍 " + get_text(lang, 'change_lang'), callback_data="change_lang")
         ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد نتیجه سیگنال ============
 def signal_result_keyboard(trade_id, lang='fa'):
     keyboard = [
         [
@@ -179,7 +176,6 @@ def signal_result_keyboard(trade_id, lang='fa'):
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد ادمین ============
 def admin_keyboard():
     keyboard = [
         [InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
@@ -217,7 +213,6 @@ def admin_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد رفرال ============
 def referral_keyboard(user_id, lang='fa'):
     link = get_referral_link(user_id)
     keyboard = [
@@ -239,6 +234,36 @@ async def check_channel_membership(user_id, context):
         return False
 
 
+# ============ پیام لودینگ متحرک ============
+async def send_loading_animation(target, lang='fa'):
+    """ارسال پیام لودینگ متحرک به مدت ۳۰ ثانیه"""
+    frames = ["🔄 تحلیل بازار...", "📊 بررسی ساختار قیمت...", "🔍 جستجوی سیگنال...", "🎯 در حال پردازش..."]
+    messages = []
+    
+    # ارسال پیام اولیه
+    msg = await target.reply_text("🔄 **تحلیل بازار در حال انجام...**\n⏳ لطفاً ۳۰ ثانیه صبر کنید.", parse_mode='Markdown')
+    messages.append(msg)
+    
+    # آپدیت پیام هر ۵ ثانیه
+    for i, frame in enumerate(frames):
+        await asyncio.sleep(5)
+        try:
+            await msg.edit_text(
+                f"{frame}\n"
+                f"⏳ {i+1} از ۴ مرحله انجام شد...",
+                parse_mode='Markdown'
+            )
+        except:
+            pass
+    
+    try:
+        await msg.edit_text("✅ **تحلیل کامل شد!**\n📡 در حال ارسال سیگنال...", parse_mode='Markdown')
+    except:
+        pass
+    
+    return msg
+
+
 # ============ ارسال سیگنال ============
 async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id, lang='fa'):
     current_price = get_current_price()
@@ -247,7 +272,6 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
     if not current_price:
         current_price = df['Close'].iloc[-1]
 
-    # ===== RR اختصاصی همین کاربر، نه سراسری =====
     rr_ratio = get_user_rr(user_id)
     RISK = 5.0
     REWARD = RISK * rr_ratio
@@ -265,30 +289,46 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
     signal['sl'] = sl
     signal['tp'] = tp
 
-    reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
-    style = analysis.get('style', 'ICT')
-    strength = signal.get('strength', 'NORMAL')
-
-    title_prefix = "⚠️ " if strength == "WEAK" else "🚨 "
+    # دلایل حرفه‌ای‌تر
+    style = analysis.get('style', 'Zigzag')
+    reasons = analysis.get('reasons', ['دلیلی ثبت نشده'])
+    
+    # بهبود دلایل
+    improved_reasons = []
+    for r in reasons:
+        if "شکست سقف" in r:
+            improved_reasons.append("🔺 " + r)
+        elif "شکست کف" in r:
+            improved_reasons.append("🔻 " + r)
+        elif "زیگزاگ صعودی" in r:
+            improved_reasons.append("📈 " + r)
+        elif "زیگزاگ نزولی" in r:
+            improved_reasons.append("📉 " + r)
+        elif "قیمت با قدرت" in r:
+            improved_reasons.append("💪 " + r)
+        else:
+            improved_reasons.append("📌 " + r)
+    
+    reasons_text = "\n".join([f"• {r}" for r in improved_reasons])
 
     message = f"""
-{title_prefix}**{get_text(lang, 'signal_title')}**
+🚀 **سیگنال Surpri3e**
 
-**📊 {get_text(lang, 'style_label')}:** {style}
-**📈 {get_text(lang, 'direction_label')}:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
-**📍 {get_text(lang, 'entry_label')}:** {entry:.2f}
-**🛑 {get_text(lang, 'sl_label')}:** {sl:.2f}
-**🎯 {get_text(lang, 'tp_label')}:** {tp:.2f}
-**🎯 {get_text(lang, 'rr_label')}:** 1:{rr_ratio:.1f}
+**📊 استراتژی:** Surpri3e Strategy (زیگزاگ + ICT)
+**📈 جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
+**📍 ورود:** {entry:.2f}
+**🛑 حد ضرر (SL):** {sl:.2f}
+**🎯 حد سود (TP):** {tp:.2f}
+**🎯 نسبت RR:** 1:{rr_ratio:.1f}
 
-**📝 {get_text(lang, 'reasons_label')}:**
+**📝 تحلیل تکنیکال:**
 {reasons_text}
 
-⏱️ **{get_text(lang, 'timeframe_label')}:** {timeframe}
-💰 **{get_text(lang, 'price_label')}:** {current_price:.2f}
-🕐 **{get_text(lang, 'time_label')}:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
+⏱️ **تایم‌فریم:** {timeframe}
+💰 **قیمت لحظه‌ای:** {current_price:.2f}
+🕐 **زمان تهران:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
 
-👇 {get_text(lang, 'result_label')}:
+👇 نتیجه معامله را انتخاب کنید:
 """
 
     await target.reply_text(
@@ -355,7 +395,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_user(user_id, lang=lang)
 
         await query.edit_message_text(
-            get_text(lang, 'select_style'),
+            "🚀 **استراتژی Surpri3e را انتخاب کنید:**",
             reply_markup=style_keyboard(lang),
             parse_mode='Markdown'
         )
@@ -370,9 +410,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب سبک =====
+    # ===== انتخاب سبک (فقط Surpri3e Strategy) =====
     if data.startswith("style_"):
-        style = data.replace("style_", "").upper()
+        style = "ZIGZAG"  # همیشه زیگزاگ
         context.user_data['style'] = style
 
         conn = connect()
@@ -402,17 +442,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب RR (اختصاصی همین کاربر) =====
+    # ===== انتخاب RR =====
     if data.startswith("rr_"):
         rr = int(data.replace("rr_", ""))
         rr = max(1, min(10, rr))
 
-        set_user_rr(user_id, rr)  # ✅ per-user، نه سراسری
+        set_user_rr(user_id, rr)
         context.user_data['rr'] = rr
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
-        style = context.user_data.get('style') or get_user_style(user_id)
-        timeframe = context.user_data.get('timeframe', '5min')
+        timeframe = context.user_data.get('timeframe', '1h')
 
         signals_left = get_user_signals_left(user_id)
         if signals_left <= 0:
@@ -423,28 +462,41 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        await query.edit_message_text(
-            get_text(lang, 'analyzing').format(timeframe=timeframe),
-            parse_mode='Markdown'
-        )
-
+        # ===== نمایش لودینگ متحرک =====
+        loading_msg = await send_loading_animation(query.message, lang)
+        
+        # ===== دریافت سیگنال (تحلیل واقعی) =====
         try:
             df = get_gold_candles(timeframe)
             if df is not None and not df.empty:
-                signal, analysis = create_signal(df, style)
+                signal, analysis = create_signal(df, "ZIGZAG")
 
                 if signal:
-                    strength = signal.get('strength', 'NORMAL')
-                    trade_id = save_trade(signal, user_id, style, strength)
+                    trade_id = save_trade(signal, user_id, "ZIGZAG")
                     use_signal(user_id)
+                    
+                    # حذف پیام لودینگ
+                    try:
+                        await loading_msg.delete()
+                    except:
+                        pass
+                    
                     await send_signal(query.message, trade_id, signal, analysis, df, timeframe, user_id, lang)
                 else:
+                    try:
+                        await loading_msg.delete()
+                    except:
+                        pass
                     await query.message.reply_text(
                         get_text(lang, 'no_signal'),
                         reply_markup=user_keyboard(lang),
                         parse_mode='Markdown'
                     )
             else:
+                try:
+                    await loading_msg.delete()
+                except:
+                    pass
                 await query.message.reply_text(
                     get_text(lang, 'error'),
                     reply_markup=user_keyboard(lang),
@@ -452,6 +504,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
         except Exception as e:
+            try:
+                await loading_msg.delete()
+            except:
+                pass
             logger.exception(f"خطا در تولید سیگنال برای کاربر {user_id}")
             await query.message.reply_text(
                 f"❌ {get_text(lang, 'error')}: {str(e)}",
@@ -465,7 +521,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text("🔒 ربات قفل است.")
         return
 
-    # ===== چک کردن عضویت در کانال =====
     if CHANNEL_ID and user_id != ADMIN_ID:
         is_member = await check_channel_membership(user_id, context)
         if not is_member:
@@ -509,7 +564,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = None
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'welcome_back'),
+            "🚀 **Surpri3e Strategy**\n\nبه پنل خوش آمدید",
             reply_markup=user_keyboard(lang),
             parse_mode='Markdown'
         )
@@ -571,25 +626,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "signal_menu":
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'select_style'),
+            "🚀 **استراتژی Surpri3e را انتخاب کنید:**",
             reply_markup=style_keyboard(lang),
             parse_mode='Markdown'
         )
         return
 
-    # ===== عملکرد =====
+    # ===== عملکرد (با وین‌ریت روزانه، هفتگی، ماهانه) =====
     if data == "performance":
         stats = get_statistics()
+        weekly_stats = get_weekly_stats()
+        monthly_stats = get_monthly_stats()
         signals_left = get_user_signals_left(user_id)
         lang = context.user_data.get('lang') or get_user_lang(user_id)
+        
         await query.edit_message_text(
-            get_text(lang, 'performance_text').format(
-                total=stats['total'],
-                wins=stats['wins'],
-                losses=stats['losses'],
-                winrate=stats['winrate'],
-                left=signals_left
-            ),
+            f"📊 **آمار عملکرد Surpri3e Strategy**\n\n"
+            f"📈 **کل معاملات:** {stats['total']}\n"
+            f"✅ **برنده (TP):** {stats['wins']}\n"
+            f"❌ **بازنده (SL):** {stats['losses']}\n"
+            f"🎯 **وین‌ریت کلی:** {stats['winrate']}%\n\n"
+            f"📊 **وین‌ریت امروز:** {weekly_stats['winrate']}%\n"
+            f"📊 **وین‌ریت این هفته:** {weekly_stats['winrate']}%\n"
+            f"📊 **وین‌ریت این ماه:** {monthly_stats['winrate']}%\n\n"
+            f"📊 **سیگنال باقی‌مانده امروز:** {signals_left}",
             reply_markup=user_keyboard(lang),
             parse_mode='Markdown'
         )
@@ -600,7 +660,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         trades = get_user_trades(user_id)
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         if trades:
-            text = get_text(lang, 'history_title') + "\n\n"
+            text = "📜 **تاریخچه معاملات:**\n\n"
             for i, t in enumerate(trades[:10], 1):
                 emoji = "✅" if t['result'] == "TP" else "❌" if t['result'] == "SL" else "⏳"
                 text += f"{i}. {t['direction']} | {t['entry']} | {emoji} {t['result']} | {t['style']}\n"
@@ -627,10 +687,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         style = context.user_data.get('style') or get_user_style(user_id)
         await query.edit_message_text(
             get_text(lang, 'settings_text').format(
-                timeframe=settings.get('default_timeframe', '5min'),
+                timeframe=settings.get('default_timeframe', '1h'),
                 status='🟢 ' + get_text(lang, 'online') if settings.get('status', True) else '🔴 ' + get_text(lang, 'offline'),
                 rr=rr,
-                style=style,
+                style='Surpri3e Strategy',
                 lang=lang
             ),
             reply_markup=user_keyboard(lang),
@@ -668,7 +728,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"📊 **کل معاملات:** {stats['total']}\n"
             f"✅ **برنده:** {stats['wins']}\n"
             f"❌ **بازنده:** {stats['losses']}\n"
-            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n\n"
+            f"🎯 **وین‌ریت:** {stats['winrate']}%\n\n"
             f"📊 **آمار امروز:**\n"
             f"• سیگنال‌های استفاده شده: {today_stats['signals_used']}\n"
             f"• TP ثبت شده: {today_stats['tp_count']}\n"
@@ -705,7 +765,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
-            "⏱️ **تایم‌فریم پیش‌فرض**\n\nگزینه‌ها: 1min, 5min, 15min, 1h, 4h, 1d",
+            "⏱️ **تایم‌فریم پیش‌فرض**\n\nگزینه‌ها: 15min, 1h, 4h, 1d",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
@@ -859,11 +919,11 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         if action == 'set_timeframe':
-            if text in ['1min', '5min', '15min', '1h', '4h', '1d']:
+            if text in ['15min', '1h', '4h', '1d']:
                 result = set_default_timeframe(text)
                 await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
-                await update.message.reply_text("❌ **گزینه نامعتبر!**\n1min, 5min, 15min, 1h, 4h, 1d", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                await update.message.reply_text("❌ **گزینه نامعتبر!**\n15min, 1h, 4h, 1d", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
 
@@ -925,7 +985,7 @@ def reset_daily():
             logging.info("🔄 سیگنال‌های روزانه ریست شد.")
         except Exception as e:
             logger.exception(f"خطا در thread ریست روزانه: {e}")
-            time.sleep(60)  # قبل از تلاش دوباره کمی صبر کن تا loop بی‌نهایت سریع نشه
+            time.sleep(60)
 
 
 # ============ اجرا ============
