@@ -96,10 +96,10 @@ def analyze_smc(df):
 
     if buy_ob:
         smc_buy_score += 35
-        smc_buy_reasons.append("Order Block خرید با حجم بالا 🟢")
+        smc_buy_reasons.append(f"ناحیه‌ی سفارش نهادی (Order Block) خرید همراه با حجم بالا در محدوده‌ی {buy_ob['price']:.2f}")
     if sell_ob:
         smc_sell_score += 35
-        smc_sell_reasons.append("Order Block فروش با حجم بالا 🔴")
+        smc_sell_reasons.append(f"ناحیه‌ی سفارش نهادی (Order Block) فروش همراه با حجم بالا در محدوده‌ی {sell_ob['price']:.2f}")
 
     # ===== Liquidity Sweep (وزن بالا = 25، امضای دوم SMC) =====
     buy_sweep = False
@@ -117,10 +117,10 @@ def analyze_smc(df):
 
     if buy_sweep:
         smc_buy_score += 25
-        smc_buy_reasons.append("شکار نقدینگی کف قیمتی 💰")
+        smc_buy_reasons.append(f"شکار نقدینگی در کف قیمتی (Liquidity Sweep) پایین سطح {lowest:.2f}")
     if sell_sweep:
         smc_sell_score += 25
-        smc_sell_reasons.append("شکار نقدینگی سقف قیمتی 💰")
+        smc_sell_reasons.append(f"شکار نقدینگی در سقف قیمتی (Liquidity Sweep) بالای سطح {highest:.2f}")
 
     # ===== FVG (وزن کمتر نسبت به ICT = 15) =====
     fvg_up = None
@@ -136,10 +136,10 @@ def analyze_smc(df):
 
     if fvg_up:
         smc_buy_score += 15
-        smc_buy_reasons.append("FVG صعودی 🎯")
+        smc_buy_reasons.append(f"شکاف قیمتی نامتعادل (FVG) صعودی در محدوده {fvg_up['lower']:.2f}–{fvg_up['upper']:.2f}")
     if fvg_down:
         smc_sell_score += 15
-        smc_sell_reasons.append("FVG نزولی 🎯")
+        smc_sell_reasons.append(f"شکاف قیمتی نامتعادل (FVG) نزولی در محدوده {fvg_down['lower']:.2f}–{fvg_down['upper']:.2f}")
 
     # ===== MSS (وزن کمتر = 15) =====
     mss_up = False
@@ -154,10 +154,25 @@ def analyze_smc(df):
 
     if mss_up:
         smc_buy_score += 15
-        smc_buy_reasons.append("تغییر ساختار صعودی (MSS) 🔄")
+        smc_buy_reasons.append("تغییر ساختار بازار (MSS) در جهت صعودی")
     if mss_down:
         smc_sell_score += 15
-        smc_sell_reasons.append("تغییر ساختار نزولی (MSS) 🔄")
+        smc_sell_reasons.append("تغییر ساختار بازار (MSS) در جهت نزولی")
+
+    # ===== ZigZag (لایه‌ی تاییدی از اندیکاتور نقاط چرخش - وزن بالا، هم‌رده با OB) =====
+    from zigzag_logic import get_zigzag_signal
+    zz = get_zigzag_signal(df)
+    if zz:
+        if zz['direction'] == 'BUY':
+            smc_buy_score += 30
+            smc_buy_reasons.append(
+                f"تایید نقطه‌ی چرخش ZigZag در جهت صعودی (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"
+            )
+        else:
+            smc_sell_score += 30
+            smc_sell_reasons.append(
+                f"تایید نقطه‌ی چرخش ZigZag در جهت نزولی (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"
+            )
 
     # ===== اندیکاتورهای تکمیلی (وزن کمتر نسبت به ICT چون SMC بیشتر ساختارمحوره) =====
     indicator_buy_score = 0
@@ -167,51 +182,51 @@ def analyze_smc(df):
 
     if current_rsi < 30:
         indicator_buy_score += 20
-        indicator_buy_reasons.append(f"RSI اشباع فروش ({current_rsi:.1f}) 📉")
+        indicator_buy_reasons.append(f"RSI در ناحیه‌ی اشباع فروش (مقدار {current_rsi:.1f})")
     elif current_rsi > 70:
         indicator_sell_score += 20
-        indicator_sell_reasons.append(f"RSI اشباع خرید ({current_rsi:.1f}) 📈")
+        indicator_sell_reasons.append(f"RSI در ناحیه‌ی اشباع خرید (مقدار {current_rsi:.1f})")
     elif current_rsi < 40:
         indicator_buy_score += 8
-        indicator_buy_reasons.append(f"RSI نزدیک اشباع فروش ({current_rsi:.1f})")
+        indicator_buy_reasons.append(f"RSI نزدیک به ناحیه‌ی اشباع فروش (مقدار {current_rsi:.1f})")
     elif current_rsi > 60:
         indicator_sell_score += 8
-        indicator_sell_reasons.append(f"RSI نزدیک اشباع خرید ({current_rsi:.1f})")
+        indicator_sell_reasons.append(f"RSI نزدیک به ناحیه‌ی اشباع خرید (مقدار {current_rsi:.1f})")
 
     if current_macd > current_macd_signal:
         indicator_buy_score += 15
-        indicator_buy_reasons.append("MACD صعودی 📊")
+        indicator_buy_reasons.append("همگرایی مثبت MACD نسبت به خط سیگنال")
     else:
         indicator_sell_score += 15
-        indicator_sell_reasons.append("MACD نزولی 📊")
+        indicator_sell_reasons.append("واگرایی منفی MACD نسبت به خط سیگنال")
 
     if current > current_ema21:
         indicator_buy_score += 10
-        indicator_buy_reasons.append("قیمت بالای EMA 21 📈")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین متحرک نمایی ۲۱ (EMA 21)")
     else:
         indicator_sell_score += 10
-        indicator_sell_reasons.append("قیمت پایین‌تر از EMA 21 📉")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین متحرک نمایی ۲۱ (EMA 21)")
 
     if current > current_ema50:
         indicator_buy_score += 8
-        indicator_buy_reasons.append("قیمت بالای EMA 50 📈")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین متحرک نمایی ۵۰ (EMA 50)")
     else:
         indicator_sell_score += 8
-        indicator_sell_reasons.append("قیمت پایین‌تر از EMA 50 📉")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین متحرک نمایی ۵۰ (EMA 50)")
 
     if current <= current_bb_low:
         indicator_buy_score += 10
-        indicator_buy_reasons.append("برخورد به باند پایین بولینگر ⬇️")
+        indicator_buy_reasons.append("برخورد قیمت با باند پایین بولینگر")
     elif current >= current_bb_high:
         indicator_sell_score += 10
-        indicator_sell_reasons.append("برخورد به باند بالای بولینگر ⬆️")
+        indicator_sell_reasons.append("برخورد قیمت با باند بالای بولینگر")
 
     if current > current_vwap:
         indicator_buy_score += 8
-        indicator_buy_reasons.append("قیمت بالای VWAP 💎")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین وزنی حجمی (VWAP)")
     else:
         indicator_sell_score += 8
-        indicator_sell_reasons.append("قیمت پایین‌تر از VWAP 💎")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین وزنی حجمی (VWAP)")
 
     # ===== جمع‌بندی نهایی =====
     total_buy_score = smc_buy_score + indicator_buy_score
