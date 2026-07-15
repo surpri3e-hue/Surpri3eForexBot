@@ -233,12 +233,10 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='f
     if not current_price:
         current_price = df['Close'].iloc[-1]
 
-    # دریافت RR از تنظیمات
     rr_ratio = float(get_setting('rr_ratio') or '2')
     RISK = 5.0
     REWARD = RISK * rr_ratio
 
-    # اصلاح Entry/SL/TP با RR متغیر
     if signal['direction'] == 'BUY':
         entry = round(current_price, 2)
         sl = round(current_price - RISK, 2)
@@ -252,7 +250,6 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='f
     signal['sl'] = sl
     signal['tp'] = tp
 
-    # ساخت متن سیگنال
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
     style = analysis.get('style', 'ICT')
 
@@ -286,17 +283,14 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='f
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
-    # پردازش رفرال
     if context.args and context.args[0].startswith('ref_'):
         referrer_id = int(context.args[0].replace('ref_', ''))
         process_referral(user_id, referrer_id)
 
-    # چک کردن قفل ربات
     if get_setting('bot_locked') == 'true':
         await update.message.reply_text("🔒 ربات در حال حاضر قفل است.")
         return
 
-    # چک کردن عضویت در کانال
     if CHANNEL_ID:
         is_member = await check_channel_membership(user_id, context)
         if not is_member:
@@ -305,7 +299,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-    # مرحله ۱: انتخاب زبان
     await update.message.reply_text(
         "🌍 **زبان خود را انتخاب کنید / Choose your language:**",
         reply_markup=language_keyboard(),
@@ -331,7 +324,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # ===== مرحله ۱: انتخاب زبان =====
+    # ===== انتخاب زبان =====
     if data.startswith("lang_"):
         lang = data.replace("lang_", "")
         context.user_data['lang'] = lang
@@ -344,7 +337,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== تغییر زبان از منوی اصلی =====
+    # ===== تغییر زبان =====
     if data == "change_lang":
         await query.edit_message_text(
             "🌍 **زبان خود را انتخاب کنید / Choose your language:**",
@@ -353,7 +346,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== مرحله ۲: انتخاب سبک =====
+    # ===== انتخاب سبک =====
     if data.startswith("style_"):
         style = data.replace("style_", "")
         context.user_data['style'] = style
@@ -372,7 +365,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== مرحله ۳: انتخاب تایم‌فریم =====
+    # ===== انتخاب تایم‌فریم =====
     if data.startswith("tf_"):
         timeframe = data.replace("tf_", "")
         context.user_data['timeframe'] = timeframe
@@ -385,17 +378,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== مرحله ۴: انتخاب RR =====
+    # ===== انتخاب RR =====
     if data.startswith("rr_"):
         rr = int(data.replace("rr_", ""))
         
-        # ===== محدود کردن RR بین ۱ تا ۱۰ =====
         if rr < 1:
             rr = 1
         if rr > 10:
             rr = 10
         
-        # ===== ذخیره RR در دیتابیس =====
         update_setting('rr_ratio', str(rr))
         context.user_data['rr'] = rr
 
@@ -403,7 +394,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         style = context.user_data.get('style', 'ICT')
         timeframe = context.user_data.get('timeframe', '5min')
 
-        # ===== چک کردن سیگنال‌های باقی‌مانده =====
         signals_left = get_user_signals_left(user_id)
         if signals_left <= 0:
             await query.edit_message_text(
@@ -422,44 +412,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df = get_gold_candles(timeframe)
             if df is not None and not df.empty:
                 signal, analysis = create_signal(df, style)
-
-                # ===== اگر سیگنال وجود نداشت، سیگنال اضطراری بساز =====
-                if signal is None:
-                    current_price = df['Close'].iloc[-1]
-                    prev_price = df['Close'].iloc[-2]
-                    price_change = ((current_price - prev_price) / prev_price) * 100
-                    
-                    if price_change > 0:
-                        direction = "BUY"
-                        reason = f"افزایش قیمت لحظه‌ای ({price_change:.2f}%)"
-                    else:
-                        direction = "SELL"
-                        reason = f"کاهش قیمت لحظه‌ای ({price_change:.2f}%)"
-                    
-                    rr_ratio = float(get_setting('rr_ratio') or '2')
-                    RISK = 5.0
-                    REWARD = RISK * rr_ratio
-
-                    if direction == "BUY":
-                        entry = round(current_price, 2)
-                        sl = round(current_price - RISK, 2)
-                        tp = round(current_price + REWARD, 2)
-                    else:
-                        entry = round(current_price, 2)
-                        sl = round(current_price + RISK, 2)
-                        tp = round(current_price - REWARD, 2)
-
-                    signal = {
-                        'direction': direction,
-                        'entry': entry,
-                        'sl': sl,
-                        'tp': tp,
-                    }
-
-                    analysis = {
-                        'reasons': [f"⚠️ سیگنال اضطراری: {reason}"],
-                        'style': style
-                    }
 
                 if signal:
                     trade_id = save_trade(signal, user_id, style)
@@ -834,7 +786,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_activity(user_id)
     text = update.message.text
 
-    # ===== ارسال همگانی =====
     if context.user_data.get('broadcast_mode', False):
         if user_id == ADMIN_ID:
             if text.lower() == '/cancel':
@@ -859,7 +810,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # ===== ورودی‌های ادمین =====
     if context.user_data.get('admin_action'):
         action = context.user_data['admin_action']
 
@@ -927,7 +877,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['admin_action'] = None
             return
 
-    # ===== پیام معمولی =====
     lang = context.user_data.get('lang', 'fa')
     await update.message.reply_text(
         get_text(lang, 'use_buttons'),
