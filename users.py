@@ -115,8 +115,8 @@ def get_active_users_today():
     conn.close()
     return result[0] if result else 0
 
-# ============ سیستم رفرال ============
 def add_referral(user_id, referrer_id):
+    from database import get_setting
     conn = connect()
     cursor = conn.cursor()
 
@@ -125,6 +125,8 @@ def add_referral(user_id, referrer_id):
 
     conn.commit()
     conn.close()
+    
+    # ===== اعمال پاداش =====
     check_referral_bonus(referrer_id)
 
 def check_referral_bonus(user_id):
@@ -132,23 +134,27 @@ def check_referral_bonus(user_id):
     conn = connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT referral_count FROM users WHERE id=?", (user_id,))
+    cursor.execute("SELECT referral_count, daily_signal_limit FROM users WHERE id=?", (user_id,))
     result = cursor.fetchone()
 
     if result:
         referral_count = result[0]
+        current_limit = result[1]
         threshold = int(get_setting('referral_threshold') or '5')
         bonus = int(get_setting('referral_bonus') or '1')
 
         if referral_count > 0:
             extra_signals = (referral_count // threshold) * bonus
+            new_limit = 5 + extra_signals  # مقدار پایه 5
             cursor.execute(
-                "UPDATE users SET daily_signal_limit = daily_signal_limit + ? WHERE id=?",
-                (extra_signals, user_id)
+                "UPDATE users SET daily_signal_limit = ? WHERE id=?",
+                (new_limit, user_id)
             )
             conn.commit()
+            return new_limit
 
     conn.close()
+    return None
 
 def reset_daily_signals():
     conn = connect()
