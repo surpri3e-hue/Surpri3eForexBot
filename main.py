@@ -77,7 +77,7 @@ if not TOKEN:
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
-# ============ کیبورد انتخاب زبان (در ابتدا) ============
+# ============ کیبورد انتخاب زبان ============
 def language_keyboard():
     keyboard = [
         [InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa")],
@@ -87,31 +87,51 @@ def language_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ کیبورد انتخاب سبک (بعد از زبان) ============
-def style_keyboard():
+# ============ کیبورد انتخاب سبک ============
+def style_keyboard(lang='fa'):
     keyboard = [
         [InlineKeyboardButton("📊 ICT", callback_data="style_ict")],
         [InlineKeyboardButton("💰 Smart Money (SMC)", callback_data="style_smc")],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ کیبورد انتخاب تایم‌فریم (بعد از سبک) ============
-def timeframe_keyboard():
+# ============ کیبورد انتخاب تایم‌فریم ============
+def timeframe_keyboard(lang='fa'):
     keyboard = [
         [
-            InlineKeyboardButton("1 دقیقه", callback_data="tf_1min"),
-            InlineKeyboardButton("5 دقیقه", callback_data="tf_5min"),
-            InlineKeyboardButton("15 دقیقه", callback_data="tf_15min")
+            InlineKeyboardButton(get_text(lang, 'tf_1min'), callback_data="tf_1min"),
+            InlineKeyboardButton(get_text(lang, 'tf_5min'), callback_data="tf_5min"),
+            InlineKeyboardButton(get_text(lang, 'tf_15min'), callback_data="tf_15min")
         ],
         [
-            InlineKeyboardButton("1 ساعت", callback_data="tf_1h"),
-            InlineKeyboardButton("4 ساعت", callback_data="tf_4h"),
-            InlineKeyboardButton("1 روز", callback_data="tf_1d")
+            InlineKeyboardButton(get_text(lang, 'tf_1h'), callback_data="tf_1h"),
+            InlineKeyboardButton(get_text(lang, 'tf_4h'), callback_data="tf_4h"),
+            InlineKeyboardButton(get_text(lang, 'tf_1d'), callback_data="tf_1d")
         ],
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ کیبورد اصلی کاربر (بعد از دریافت سیگنال) ============
+# ============ کیبورد انتخاب RR (۱ تا ۱۰) ============
+def rr_keyboard(lang='fa'):
+    keyboard = [
+        [
+            InlineKeyboardButton("1", callback_data="rr_1"),
+            InlineKeyboardButton("2", callback_data="rr_2"),
+            InlineKeyboardButton("3", callback_data="rr_3"),
+            InlineKeyboardButton("4", callback_data="rr_4"),
+            InlineKeyboardButton("5", callback_data="rr_5")
+        ],
+        [
+            InlineKeyboardButton("6", callback_data="rr_6"),
+            InlineKeyboardButton("7", callback_data="rr_7"),
+            InlineKeyboardButton("8", callback_data="rr_8"),
+            InlineKeyboardButton("9", callback_data="rr_9"),
+            InlineKeyboardButton("10", callback_data="rr_10")
+        ],
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ============ کیبورد اصلی کاربر ============
 def user_keyboard(lang='fa'):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'signal_btn'), callback_data="signal_menu")],
@@ -312,7 +332,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             get_text(lang, 'select_style'),
-            reply_markup=style_keyboard(),
+            reply_markup=style_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -331,9 +351,85 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = context.user_data.get('lang', 'fa')
         await query.edit_message_text(
             get_text(lang, 'select_timeframe'),
-            reply_markup=timeframe_keyboard(),
+            reply_markup=timeframe_keyboard(lang),
             parse_mode='Markdown'
         )
+        return
+
+    # ===== مرحله ۳: انتخاب تایم‌فریم =====
+    if data.startswith("tf_"):
+        timeframe = data.replace("tf_", "")
+        context.user_data['timeframe'] = timeframe
+
+        lang = context.user_data.get('lang', 'fa')
+        await query.edit_message_text(
+            get_text(lang, 'select_rr'),
+            reply_markup=rr_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== مرحله ۴: انتخاب RR =====
+    if data.startswith("rr_"):
+        rr = int(data.replace("rr_", ""))
+        
+        # ===== محدود کردن RR بین ۱ تا ۱۰ =====
+        if rr < 1:
+            rr = 1
+        if rr > 10:
+            rr = 10
+        
+        # ===== ذخیره RR در دیتابیس =====
+        update_setting('rr_ratio', str(rr))
+        context.user_data['rr'] = rr
+
+        lang = context.user_data.get('lang', 'fa')
+        style = context.user_data.get('style', 'ICT')
+        timeframe = context.user_data.get('timeframe', '5min')
+
+        # ===== چک کردن سیگنال‌های باقی‌مانده =====
+        signals_left = get_user_signals_left(user_id)
+        if signals_left <= 0:
+            await query.edit_message_text(
+                get_text(lang, 'no_signals_left'),
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
+
+        await query.edit_message_text(
+            get_text(lang, 'analyzing').format(timeframe=timeframe),
+            parse_mode='Markdown'
+        )
+
+        try:
+            df = get_gold_candles(timeframe)
+            if df is not None and not df.empty:
+                signal, analysis = create_signal(df, style)
+
+                if signal:
+                    trade_id = save_trade(signal, user_id, style)
+                    use_signal(user_id)
+                    await send_signal(query.message, trade_id, signal, analysis, df, timeframe, lang)
+                else:
+                    await query.message.reply_text(
+                        get_text(lang, 'no_signal'),
+                        reply_markup=user_keyboard(lang),
+                        parse_mode='Markdown'
+                    )
+            else:
+                await query.message.reply_text(
+                    get_text(lang, 'error'),
+                    reply_markup=user_keyboard(lang),
+                    parse_mode='Markdown'
+                )
+
+        except Exception as e:
+            await query.message.reply_text(
+                f"❌ {get_text(lang, 'error')}: {str(e)}",
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
         return
 
     # ===== چک کردن قفل ربات =====
@@ -442,58 +538,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== منوی اصلی سیگنال (همون انتخاب تایم‌فریم) =====
+    # ===== منوی اصلی سیگنال =====
     if data == "signal_menu":
         lang = context.user_data.get('lang', 'fa')
         await query.edit_message_text(
-            get_text(lang, 'select_timeframe'),
-            reply_markup=timeframe_keyboard(),
+            get_text(lang, 'select_style'),
+            reply_markup=style_keyboard(lang),
             parse_mode='Markdown'
         )
-        return
-
-    # ===== انتخاب تایم‌فریم و دریافت سیگنال =====
-    if data.startswith("tf_"):
-        if get_setting('signal_enabled') != 'true':
-            lang = context.user_data.get('lang', 'fa')
-            await query.message.reply_text(get_text(lang, 'signal_disabled'), parse_mode='Markdown')
-            return
-
-        timeframe_map = {
-            "tf_1min": "1min", "tf_5min": "5min", "tf_15min": "15min",
-            "tf_1h": "1h", "tf_4h": "4h", "tf_1d": "1d"
-        }
-        timeframe = timeframe_map.get(data, "5min")
-        display = data.replace("tf_", "")
-
-        # چک کردن تعداد سیگنال باقی‌مانده
-        signals_left = get_user_signals_left(user_id)
-        if signals_left <= 0:
-            lang = context.user_data.get('lang', 'fa')
-            await query.message.reply_text(get_text(lang, 'no_signals_left'), parse_mode='Markdown')
-            return
-
-        lang = context.user_data.get('lang', 'fa')
-        style = context.user_data.get('style', 'ICT')
-
-        await query.edit_message_text(get_text(lang, 'analyzing').format(timeframe=display), parse_mode='Markdown')
-
-        try:
-            df = get_gold_candles(timeframe)
-            if df is not None and not df.empty:
-                signal, analysis = create_signal(df, style)
-
-                if signal:
-                    trade_id = save_trade(signal, user_id, style)
-                    use_signal(user_id)
-                    await send_signal(query.message, trade_id, signal, analysis, df, display, lang)
-                else:
-                    await query.message.reply_text(get_text(lang, 'no_signal'), parse_mode='Markdown')
-            else:
-                await query.message.reply_text(get_text(lang, 'error'), parse_mode='Markdown')
-
-        except Exception as e:
-            await query.message.reply_text(f"❌ {get_text(lang, 'error')}: {str(e)}", parse_mode='Markdown')
         return
 
     # ===== عملکرد =====
