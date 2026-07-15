@@ -99,10 +99,10 @@ def analyze_ict(df):
 
     if bos_up:
         ict_buy_score += 30
-        ict_buy_reasons.append("شکست سقف قبلی (BOS UP)")
+        ict_buy_reasons.append(f"شکست ساختار صعودی (BOS) بالای سطح {last_high:.2f}")
     if bos_down:
         ict_sell_score += 30
-        ict_sell_reasons.append("شکست کف قبلی (BOS DOWN)")
+        ict_sell_reasons.append(f"شکست ساختار نزولی (BOS) پایین سطح {last_low:.2f}")
 
     # ===== MSS (Market Structure Shift) =====
     mss_up = False
@@ -117,10 +117,10 @@ def analyze_ict(df):
 
     if mss_up:
         ict_buy_score += 25
-        ict_buy_reasons.append("تغییر ساختار صعودی (MSS)")
+        ict_buy_reasons.append("تغییر ساختار بازار (MSS) در جهت صعودی")
     if mss_down:
         ict_sell_score += 25
-        ict_sell_reasons.append("تغییر ساختار نزولی (MSS)")
+        ict_sell_reasons.append("تغییر ساختار بازار (MSS) در جهت نزولی")
 
     # ===== FVG (Fair Value Gap) - سه‌کندلی، جهت اصلاح‌شده =====
     # Bullish FVG: low کندل جدیدتر (i+1) بالاتر از high کندل قدیمی‌تر (i-1) باشه
@@ -138,10 +138,10 @@ def analyze_ict(df):
 
     if fvg_up:
         ict_buy_score += 25
-        ict_buy_reasons.append("FVG صعودی")
+        ict_buy_reasons.append(f"شکاف قیمتی نامتعادل (FVG) صعودی در محدوده {fvg_up['lower']:.2f}–{fvg_up['upper']:.2f}")
     if fvg_down:
         ict_sell_score += 25
-        ict_sell_reasons.append("FVG نزولی")
+        ict_sell_reasons.append(f"شکاف قیمتی نامتعادل (FVG) نزولی در محدوده {fvg_down['lower']:.2f}–{fvg_down['upper']:.2f}")
 
     # ===== Order Block =====
     buy_ob = None
@@ -158,10 +158,10 @@ def analyze_ict(df):
 
     if buy_ob:
         ict_buy_score += 25
-        ict_buy_reasons.append("Order Block خرید")
+        ict_buy_reasons.append(f"ناحیه‌ی سفارش نهادی (Order Block) خرید در محدوده‌ی {buy_ob['price']:.2f}")
     if sell_ob:
         ict_sell_score += 25
-        ict_sell_reasons.append("Order Block فروش")
+        ict_sell_reasons.append(f"ناحیه‌ی سفارش نهادی (Order Block) فروش در محدوده‌ی {sell_ob['price']:.2f}")
 
     # ===== Liquidity =====
     buy_liquidity = False
@@ -176,10 +176,25 @@ def analyze_ict(df):
 
     if buy_liquidity:
         ict_buy_score += 15
-        ict_buy_reasons.append("نقدینگی خرید")
+        ict_buy_reasons.append("نزدیکی به منطقه‌ی نقدینگی خریداران")
     if sell_liquidity:
         ict_sell_score += 15
-        ict_sell_reasons.append("نقدینگی فروش")
+        ict_sell_reasons.append("نزدیکی به منطقه‌ی نقدینگی فروشندگان")
+
+    # ===== ZigZag (لایه‌ی تاییدی از اندیکاتور نقاط چرخش) =====
+    from zigzag_logic import get_zigzag_signal
+    zz = get_zigzag_signal(df)
+    if zz:
+        if zz['direction'] == 'BUY':
+            ict_buy_score += 25
+            ict_buy_reasons.append(
+                f"تایید نقطه‌ی چرخش ZigZag در جهت صعودی (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"
+            )
+        else:
+            ict_sell_score += 25
+            ict_sell_reasons.append(
+                f"تایید نقطه‌ی چرخش ZigZag در جهت نزولی (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"
+            )
 
     # ===== اندیکاتورهای تکمیلی =====
     indicator_buy_score = 0
@@ -189,51 +204,51 @@ def analyze_ict(df):
 
     if current_rsi < 30:
         indicator_buy_score += 25
-        indicator_buy_reasons.append(f"RSI اشباع فروش ({current_rsi:.1f})")
+        indicator_buy_reasons.append(f"RSI در ناحیه‌ی اشباع فروش (مقدار {current_rsi:.1f})")
     elif current_rsi > 70:
         indicator_sell_score += 25
-        indicator_sell_reasons.append(f"RSI اشباع خرید ({current_rsi:.1f})")
+        indicator_sell_reasons.append(f"RSI در ناحیه‌ی اشباع خرید (مقدار {current_rsi:.1f})")
     elif current_rsi < 40:
         indicator_buy_score += 10
-        indicator_buy_reasons.append(f"RSI نزدیک اشباع فروش ({current_rsi:.1f})")
+        indicator_buy_reasons.append(f"RSI نزدیک به ناحیه‌ی اشباع فروش (مقدار {current_rsi:.1f})")
     elif current_rsi > 60:
         indicator_sell_score += 10
-        indicator_sell_reasons.append(f"RSI نزدیک اشباع خرید ({current_rsi:.1f})")
+        indicator_sell_reasons.append(f"RSI نزدیک به ناحیه‌ی اشباع خرید (مقدار {current_rsi:.1f})")
 
     if current_macd > current_macd_signal:
         indicator_buy_score += 20
-        indicator_buy_reasons.append("MACD صعودی")
+        indicator_buy_reasons.append("همگرایی مثبت MACD نسبت به خط سیگنال")
     else:
         indicator_sell_score += 20
-        indicator_sell_reasons.append("MACD نزولی")
+        indicator_sell_reasons.append("واگرایی منفی MACD نسبت به خط سیگنال")
 
     if current > current_ema21:
         indicator_buy_score += 15
-        indicator_buy_reasons.append("قیمت بالای EMA 21")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین متحرک نمایی ۲۱ (EMA 21)")
     else:
         indicator_sell_score += 15
-        indicator_sell_reasons.append("قیمت پایین‌تر از EMA 21")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین متحرک نمایی ۲۱ (EMA 21)")
 
     if current > current_ema50:
         indicator_buy_score += 10
-        indicator_buy_reasons.append("قیمت بالای EMA 50")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین متحرک نمایی ۵۰ (EMA 50)")
     else:
         indicator_sell_score += 10
-        indicator_sell_reasons.append("قیمت پایین‌تر از EMA 50")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین متحرک نمایی ۵۰ (EMA 50)")
 
     if current <= current_bb_low:
         indicator_buy_score += 15
-        indicator_buy_reasons.append("برخورد به باند پایین بولینگر")
+        indicator_buy_reasons.append("برخورد قیمت با باند پایین بولینگر")
     elif current >= current_bb_high:
         indicator_sell_score += 15
-        indicator_sell_reasons.append("برخورد به باند بالای بولینگر")
+        indicator_sell_reasons.append("برخورد قیمت با باند بالای بولینگر")
 
     if current > current_vwap:
         indicator_buy_score += 10
-        indicator_buy_reasons.append("قیمت بالای VWAP")
+        indicator_buy_reasons.append("قیمت بالاتر از میانگین وزنی حجمی (VWAP)")
     else:
         indicator_sell_score += 10
-        indicator_sell_reasons.append("قیمت پایین‌تر از VWAP")
+        indicator_sell_reasons.append("قیمت پایین‌تر از میانگین وزنی حجمی (VWAP)")
 
     # ===== جمع‌بندی نهایی =====
     total_buy_score = ict_buy_score + indicator_buy_score
