@@ -1,9 +1,8 @@
-# ict_logic.py
 import numpy as np
 
 def analyze_ict(df):
     """
-    تحلیل ICT با خروجی تضمینی
+    تحلیل ICT
     """
     if df is None or len(df) < 20:
         return None, None
@@ -15,7 +14,7 @@ def analyze_ict(df):
     current = close[-1]
     prev = close[-2]
 
-    # ===== 1. شناسایی ساختار بازار =====
+    # ===== ساختار بازار =====
     bos_up = False
     bos_down = False
 
@@ -30,7 +29,7 @@ def analyze_ict(df):
         if current < min(low[-10:-5]) - 2:
             bos_down = True
 
-    # ===== 2. FVG =====
+    # ===== FVG =====
     fvg_up = False
     fvg_down = False
 
@@ -46,7 +45,7 @@ def analyze_ict(df):
                     fvg_down = True
                     break
 
-    # ===== 3. Order Block =====
+    # ===== Order Block =====
     buy_ob = False
     sell_ob = False
 
@@ -65,7 +64,7 @@ def analyze_ict(df):
                         sell_ob = True
                         break
 
-    # ===== 4. نقدینگی =====
+    # ===== نقدینگی =====
     buy_liquidity = False
     sell_liquidity = False
 
@@ -78,11 +77,11 @@ def analyze_ict(df):
         if current < min(recent_lows) + 2:
             sell_liquidity = True
 
-    # ===== 5. میانگین متحرک =====
+    # ===== میانگین متحرک =====
     ma20 = np.mean(close[-20:])
     ma50 = np.mean(close[-50:]) if len(close) >= 50 else ma20
 
-    # ===== 6. محاسبه امتیاز BUY =====
+    # ===== امتیاز BUY =====
     buy_score = 0
     buy_reasons = []
 
@@ -105,7 +104,7 @@ def analyze_ict(df):
         buy_score += 10
         buy_reasons.append("قیمت بالای MA50")
 
-    # ===== 7. محاسبه امتیاز SELL =====
+    # ===== امتیاز SELL =====
     sell_score = 0
     sell_reasons = []
 
@@ -128,33 +127,51 @@ def analyze_ict(df):
         sell_score += 10
         sell_reasons.append("قیمت پایین‌تر از MA50")
 
-    # ===== 8. انتخاب نهایی (با آستانه پایین‌تر) =====
+    # ===== انتخاب نهایی =====
     direction = None
     reasons = []
 
-    # اگر BUY امتیاز بیشتری داشت و حداقل ۳۰ بود
-    if buy_score >= 30 and buy_score >= sell_score:
+    if buy_score >= 30 and buy_score > sell_score:
         direction = "BUY"
         reasons = buy_reasons
-    # اگر SELL امتیاز بیشتری داشت و حداقل ۳۰ بود
     elif sell_score >= 30 and sell_score > buy_score:
         direction = "SELL"
         reasons = sell_reasons
-    # در غیر این صورت، بر اساس تغییر قیمت تصمیم بگیر
     else:
         price_change = ((current - prev) / prev) * 100
-        if price_change > 0.05:
+        
+        if price_change > 0.1:
             direction = "BUY"
             reasons = ["افزایش قیمت لحظه‌ای"]
-        elif price_change < -0.05:
+        elif price_change < -0.1:
             direction = "SELL"
             reasons = ["کاهش قیمت لحظه‌ای"]
         else:
-            # آخرین راهکار: پیش‌فرض BUY
-            direction = "BUY"
-            reasons = ["شرایط خنثی، پیش‌فرض BUY"]
+            try:
+                delta = np.diff(close)
+                gain = np.where(delta > 0, delta, 0)
+                loss = np.where(delta < 0, -delta, 0)
+                avg_gain = np.mean(gain[-14:])
+                avg_loss = np.mean(loss[-14:])
+                if avg_loss == 0:
+                    rsi = 100
+                else:
+                    rs = avg_gain / avg_loss
+                    rsi = 100 - (100 / (1 + rs))
+                
+                if rsi < 30:
+                    direction = "BUY"
+                    reasons = [f"RSI در منطقه اشباع فروش ({rsi:.1f})"]
+                elif rsi > 70:
+                    direction = "SELL"
+                    reasons = [f"RSI در منطقه اشباع خرید ({rsi:.1f})"]
+                else:
+                    return None, None
+                    
+            except:
+                return None, None
 
-    # ===== 9. محاسبه Entry/SL/TP =====
+    # ===== Entry/SL/TP =====
     from database import get_setting
     rr_ratio = float(get_setting('rr_ratio') or '2')
     RISK = 5.0
