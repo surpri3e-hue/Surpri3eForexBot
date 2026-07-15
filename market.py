@@ -61,8 +61,13 @@ def get_gold_candles(timeframe="5min", count=50):
             df = pd.DataFrame(df_data)
             df = df.set_index('Date')
             df = df.sort_index()
+            
+            # 🔥 کلید حل مشکل Repaint و پرش سیگنال:
+            # حذف کندل آخر که هنوز بسته نشده و در حال نوسان است
+            df = df.iloc[:-1]
+            
             df.attrs['is_real_data'] = True
-            print(f"✅ Twelve Data: {len(df)} کندل دریافت شد (دیتای واقعی)")
+            print(f"✅ Twelve Data: {len(df)} کندل تثبیت‌شده دریافت شد (دیتای واقعی)")
             return df
         else:
             print(f"⚠️ پاسخ نامعتبر از Twelve Data: {data}")
@@ -106,6 +111,10 @@ def generate_test_data(timeframe="5min", count=50):
 
         df = pd.DataFrame(data, index=dates)
         df = df.dropna()
+        
+        # 🔥 حذف کندل لایو از دیتای تستی برای هماهنگی با رفتار واقعی
+        df = df.iloc[:-1]
+        
         df.attrs['is_real_data'] = False
         return df
 
