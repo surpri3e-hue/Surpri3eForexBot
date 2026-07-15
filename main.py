@@ -100,6 +100,7 @@ def style_keyboard(lang='fa'):
     keyboard = [
         [InlineKeyboardButton("📊 ICT", callback_data="style_ict")],
         [InlineKeyboardButton("💰 Smart Money (SMC)", callback_data="style_smc")],
+        [InlineKeyboardButton("🌀 Surpri3e Strategy", callback_data="style_surpri3e")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
