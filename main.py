@@ -18,7 +18,7 @@ from telegram.ext import (
 
 from market import get_current_price, get_gold_candles, get_tehran_time
 from signals import create_signal, ict_analysis_with_explanation
-from ai_deepseek import analyze_with_deepseek
+from ai_groq import analyze_with_groq, chat_with_groq
 
 from database import (
     create_database,
@@ -196,9 +196,9 @@ async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe)
 """
 
     ai_text = f"""
-🤖 **نظر دیپ سیک:**
+🤖 **نظر Groq AI:**
 
-{analyze_with_deepseek(df, signal, analysis)}
+{analyze_with_groq(df, signal, analysis)}
 """
 
     message = f"""
@@ -667,8 +667,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🤔 **در حال فکر کردن...**", parse_mode='Markdown')
 
         try:
-            from ai_deepseek import chat_with_deepseek
-            response = await chat_with_deepseek(text)
+            response = await chat_with_groq(text)
             if len(response) > 4000:
                 for i in range(0, len(response), 4000):
                     await update.message.reply_text(response[i:i+4000], parse_mode='Markdown')
