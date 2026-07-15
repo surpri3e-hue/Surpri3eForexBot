@@ -13,7 +13,8 @@ def get_tehran_time():
     return datetime.now(TEHRAN_TZ)
 
 
-def get_gold_candles(timeframe="5min", count=50):
+# 🔥 تعداد پیش‌فرض کندل‌ها به 200 افزایش یافت تا ICT و SMC دیتای کافی داشته باشند
+def get_gold_candles(timeframe="5min", count=200):
     """
     دیتای کندلی طلا رو برمی‌گردونه.
     df.attrs['is_real_data'] مشخص می‌کنه دیتا از Twelve Data اومده (True)
@@ -62,8 +63,7 @@ def get_gold_candles(timeframe="5min", count=50):
             df = df.set_index('Date')
             df = df.sort_index()
             
-            # 🔥 کلید حل مشکل Repaint و پرش سیگنال:
-            # حذف کندل آخر که هنوز بسته نشده و در حال نوسان است
+            # 🔥 حذف کندل لایو (در حال نوسان) برای جلوگیری از تغییر سیگنال
             df = df.iloc[:-1]
             
             df.attrs['is_real_data'] = True
@@ -78,7 +78,7 @@ def get_gold_candles(timeframe="5min", count=50):
         return generate_test_data(timeframe, count)
 
 
-def generate_test_data(timeframe="5min", count=50):
+def generate_test_data(timeframe="5min", count=200):
     """
     ⚠️ دیتای تصادفی شبیه‌سازی‌شده - فقط برای تست ساختار کد.
     هیچ سیگنالی که روی این دیتا تولید بشه معتبر نیست چون کاملاً نویز رندومه.
@@ -112,7 +112,7 @@ def generate_test_data(timeframe="5min", count=50):
         df = pd.DataFrame(data, index=dates)
         df = df.dropna()
         
-        # 🔥 حذف کندل لایو از دیتای تستی برای هماهنگی با رفتار واقعی
+        # 🔥 حذف کندل لایو از دیتای تستی
         df = df.iloc[:-1]
         
         df.attrs['is_real_data'] = False
