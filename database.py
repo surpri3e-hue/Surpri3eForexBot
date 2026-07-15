@@ -10,7 +10,6 @@ def create_database():
     conn = connect()
     cursor = conn.cursor()
 
-    # جدول معاملات
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS trades (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -26,7 +25,6 @@ def create_database():
     )
     """)
 
-    # جدول تنظیمات ربات
     cursor.execute("""
     CREATE TABLE IF NOT EXISTS bot_settings (
         id INTEGER PRIMARY KEY AUTOINCREMENT,
@@ -36,7 +34,6 @@ def create_database():
     )
     """)
 
-    # تنظیمات پیش‌فرض
     default_settings = [
         ('daily_signal_limit', '5'),
         ('referral_bonus', '1'),
@@ -45,11 +42,7 @@ def create_database():
         ('default_timeframe', '1h'),
         ('bot_locked', 'false'),
         ('signal_enabled', 'true'),
-        ('ai_enabled', 'true'),
-        ('vip_enabled', 'true'),
-        ('max_signals_per_day', '10'),
-        ('min_rsi', '30'),
-        ('max_rsi', '70')
+        ('channel_locked', 'false')
     ]
 
     for key, value in default_settings:
@@ -61,7 +54,6 @@ def create_database():
     conn.commit()
     conn.close()
 
-# ============ تنظیمات ============
 def get_setting(key):
     conn = connect()
     cursor = conn.cursor()
@@ -89,7 +81,6 @@ def get_all_settings():
     conn.close()
     return {key: value for key, value in results}
 
-# ============ معاملات ============
 def save_trade(signal, user_id=0):
     conn = connect()
     cursor = conn.cursor()
@@ -117,11 +108,9 @@ def update_result(trade_id, result):
     conn = connect()
     cursor = conn.cursor()
 
-    profit = 2 if result == "TP" else -1 if result == "SL" else 0
-
     cursor.execute(
-        "UPDATE trades SET result=?, profit=? WHERE id=?",
-        (result, profit, trade_id)
+        "UPDATE trades SET result=? WHERE id=?",
+        (result, trade_id)
     )
 
     conn.commit()
@@ -152,32 +141,19 @@ def get_user_trades(user_id=0):
 def get_statistics():
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT result, profit FROM trades")
+    cursor.execute("SELECT result FROM trades")
     rows = cursor.fetchall()
     conn.close()
 
     total = len(rows)
     wins = sum(1 for r in rows if r[0] == "TP")
     losses = sum(1 for r in rows if r[0] == "SL")
-    total_profit = sum(r[1] for r in rows if r[1] > 0)
-    total_loss = abs(sum(r[1] for r in rows if r[1] < 0))
 
     winrate = round((wins / total) * 100, 2) if total > 0 else 0
-    profit_factor = round(total_profit / total_loss, 2) if total_loss > 0 else 0
 
     return {
         'total': total,
         'wins': wins,
         'losses': losses,
-        'winrate': winrate,
-        'profit_factor': profit_factor,
-        'total_profit': total_profit
+        'winrate': winrate
     }
-
-def get_open_trades():
-    conn = connect()
-    cursor = conn.cursor()
-    cursor.execute("SELECT * FROM trades WHERE result='OPEN'")
-    rows = cursor.fetchall()
-    conn.close()
-    return rows
