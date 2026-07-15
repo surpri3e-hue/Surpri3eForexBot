@@ -1,7 +1,9 @@
 import os
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
+import threading
+import time
 from telegram import (
     Update,
     InlineKeyboardButton,
@@ -18,7 +20,6 @@ from telegram.ext import (
 
 from market import get_current_price, get_gold_candles, get_tehran_time
 from signals import create_signal, ict_analysis_with_explanation
-from ai_groq import analyze_with_groq, chat_with_groq
 
 from database import (
     create_database,
@@ -26,7 +27,8 @@ from database import (
     update_result,
     get_user_trades,
     get_statistics,
-    get_setting
+    get_setting,
+    update_setting
 )
 
 from users import (
@@ -40,7 +42,8 @@ from users import (
     delete_user,
     reset_daily_signals,
     get_user_signals_left,
-    use_signal
+    use_signal,
+    add_referral
 )
 
 from settings import init_settings, get_settings
@@ -50,18 +53,14 @@ from admin_tools import (
     dashboard,
     toggle_signal,
     toggle_bot_lock,
-    toggle_ai,
-    toggle_vip,
     toggle_channel_lock,
-    ai_status,
-    logs_text,
     set_daily_signal_limit,
     set_rr_ratio,
     set_default_timeframe,
-    set_rsi_limits,
     set_referral_bonus,
     set_referral_threshold,
-    report
+    report,
+    get_today_stats
 )
 
 # ============ تنظیمات اولیه ============
@@ -73,9 +72,12 @@ logging.basicConfig(
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 SUPPORT_ID = "@RealSurprise"
+CHANNEL_ID = os.getenv("CHANNEL_ID")  # مثلاً @MyChannel
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
+
+TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
 # ============ کیبورد کاربر ============
 def user_keyboard():
@@ -92,8 +94,7 @@ def user_keyboard():
         [
             InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
             InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")
-        ],
-        [InlineKeyboardButton("🤖 چت با AI", callback_data="ai_chat")]
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -120,7 +121,7 @@ def admin_keyboard():
         [InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
         [
             InlineKeyboardButton("👥 Users", callback_data="users"),
-            InlineKeyboardButton("📈 Analytics", callback_data="analytics")
+            InKeyboardButton("📈 Analytics", callback_data="analytics")
         ],
         [
             InlineKeyboardButton("📊 Set Daily Signal", callback_data="set_daily_signal"),
@@ -128,32 +129,25 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton("⏱️ Set Timeframe", callback_data="set_timeframe"),
-            InlineKeyboardButton("📈 Set RSI Limits", callback_data="set_rsi")
+            InlineKeyboardButton("👥 Referral Bonus", callback_data="set_referral_bonus")
         ],
         [
-            InlineKeyboardButton("👥 Referral Bonus", callback_data="set_referral_bonus"),
-            InlineKeyboardButton("🎯 Referral Threshold", callback_data="set_referral_threshold")
+            InlineKeyboardButton("🎯 Referral Threshold", callback_data="set_referral_threshold"),
+            InlineKeyboardButton("🔄 Reset Signals", callback_data="reset_signals")
         ],
         [
-            InlineKeyboardButton("🔄 Reset Signals", callback_data="reset_signals"),
-            InlineKeyboardButton("🔒 Bot Lock", callback_data="bot_lock")
+            InlineKeyboardButton("🔒 Bot Lock", callback_data="bot_lock"),
+            InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control")
         ],
         [
-            InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control"),
-            InlineKeyboardButton("🧠 AI Control", callback_data="ai_control")
+            InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock"),
+            InlineKeyboardButton("👑 VIP User", callback_data="vip_user")
         ],
         [
-            InlineKeyboardButton("💎 VIP Control", callback_data="vip_control"),
-            InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock")
+            InlineKeyboardButton("🗑️ Delete User", callback_data="delete_user"),
+            InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")
         ],
-        [
-            InlineKeyboardButton("👑 VIP User", callback_data="vip_user"),
-            InlineKeyboardButton("🗑️ Delete User", callback_data="delete_user")
-        ],
-        [
-            InlineKeyboardButton("📢 Broadcast", callback_data="broadcast"),
-            InlineKeyboardButton("📊 Reports", callback_data="reports")
-        ],
+        [InlineKeyboardButton("📊 Reports", callback_data="reports")],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -169,15 +163,18 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ کیبورد چت AI ============
-def ai_chat_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_from_ai")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+# ============ چک کردن عضویت در کانال ============
+async def check_channel_membership(user_id, context):
+    if not CHANNEL_ID:
+        return True
+    try:
+        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        return member.status in ['member', 'administrator', 'creator']
+    except:
+        return False
 
 # ============ ارسال سیگنال ============
-async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe):
+async def send_signal(target, trade_id, signal, analysis, df, timeframe):
     current_price = get_current_price()
     tehran_time = get_tehran_time()
     
@@ -195,18 +192,10 @@ async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe)
 **امتیاز:** {analysis.get('score', 0)}
 """
 
-    ai_text = f"""
-🤖 **نظر Groq AI:**
-
-{analyze_with_groq(df, signal, analysis)}
-"""
-
     message = f"""
 🚨 **سیگنال جدید**
 
 {ict_text}
-
-{ai_text}
 
 ⏱️ **تایم‌فریم:** {timeframe}
 💰 **قیمت لحظه‌ای:** {current_price if current_price else df['Close'].iloc[-1]:.2f}
@@ -224,9 +213,25 @@ async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe)
 # ============ دستور /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
+    
+    # ===== چک کردن قفل ربات =====
+    if get_setting('bot_locked') == 'true':
+        await update.message.reply_text("🔒 **ربات در حال حاضر قفل است.**\nلطفاً بعداً تلاش کنید.")
+        return
+    
+    # ===== چک کردن عضویت در کانال =====
+    if CHANNEL_ID:
+        is_member = await check_channel_membership(user_id, context)
+        if not is_member:
+            await update.message.reply_text(
+                f"🔒 **برای استفاده از ربات باید عضو کانال ما شوید:**\n\n"
+                f"📢 {CHANNEL_ID}\n\n"
+                f"پس از عضویت، دوباره /start را بزنید."
+            )
+            return
+    
     add_user(user_id)
     update_activity(user_id)
-    context.user_data['ai_chat_mode'] = False
     context.user_data['admin_action'] = None
 
     await update.message.reply_text(
@@ -236,7 +241,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 تایم‌فریم مورد نظر را انتخاب کنید\n"
         "🔹 آمار عملکرد خود را در 📊 ببینید\n"
         "🔹 قیمت لحظه‌ای طلا را در 💰 ببینید\n"
-        "🔹 با 🤖 چت با AI صحبت کنید\n"
         "🔹 برای ارتباط با پشتیبانی روی 🆘 کلیک کنید\n\n"
         "موفق باشید! 🍀",
         reply_markup=user_keyboard(),
@@ -260,6 +264,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
+    user_id = query.from_user.id
+
+    # ===== چک کردن قفل ربات =====
+    if get_setting('bot_locked') == 'true' and user_id != ADMIN_ID:
+        await query.edit_message_text("🔒 **ربات قفل است.**")
+        return
+
+    # ===== چک کردن عضویت در کانال =====
+    if CHANNEL_ID and user_id != ADMIN_ID:
+        is_member = await check_channel_membership(user_id, context)
+        if not is_member:
+            await query.edit_message_text(
+                f"🔒 **برای استفاده از ربات باید عضو کانال ما شوید:**\n\n📢 {CHANNEL_ID}"
+            )
+            return
 
     # ===== نتیجه سیگنال =====
     if data.startswith("tp_"):
@@ -292,37 +311,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== برگشت =====
     if data == "back":
-        context.user_data['ai_chat_mode'] = False
         context.user_data['admin_action'] = None
         await query.edit_message_text(
             "🤖 **Surpri3e AI Scanner**\n\nبه پنل خوش آمدید",
             reply_markup=user_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data == "back_from_ai":
-        context.user_data['ai_chat_mode'] = False
-        await query.edit_message_text(
-            "🔙 **بازگشت به منو**",
-            reply_markup=user_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    # ===== چت با AI =====
-    if data == "ai_chat":
-        context.user_data['ai_chat_mode'] = True
-        await query.edit_message_text(
-            "🤖 **حالت چت با AI فعال شد!**\n\n"
-            "هر سوالی درباره طلا، ترید، تحلیل بازار دارید بپرسید.\n\n"
-            "💡 **پیشنهاد:**\n"
-            "• طلا الان چطوره؟\n"
-            "• تحلیل طلا امروز\n"
-            "• آموزش ترید برای مبتدیان\n"
-            "• حد ضرر چیه؟\n\n"
-            "برای خروج، دکمه 🔙 بازگشت رو بزنید.",
-            reply_markup=ai_chat_keyboard(),
             parse_mode='Markdown'
         )
         return
@@ -382,12 +374,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== انتخاب تایم‌فریم =====
     if data.startswith("tf_"):
+        # چک کردن فعال بودن سیگنال
+        if get_setting('signal_enabled') != 'true':
+            await query.message.reply_text("⛔ **سیگنال‌دهی غیرفعال است.**", parse_mode='Markdown')
+            return
+
         timeframe_map = {
             "tf_1min": "1min", "tf_5min": "5min", "tf_15min": "15min",
             "tf_1h": "1h", "tf_4h": "4h", "tf_1d": "1d"
         }
         timeframe = timeframe_map.get(data, "5min")
         display = data.replace("tf_", "")
+
+        # ===== چک کردن تعداد سیگنال باقی‌مانده =====
+        signals_left = get_user_signals_left(user_id)
+        if signals_left <= 0:
+            await query.message.reply_text(
+                "❌ **تعداد سیگنال روزانه شما تمام شده!**\n"
+                "صبر کنید تا فردا یا از طریق رفرال افزایش دهید.",
+                parse_mode='Markdown'
+            )
+            return
 
         await query.edit_message_text(f"🔍 **در حال تحلیل ({display})...**", parse_mode='Markdown')
 
@@ -397,9 +404,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 signal, analysis = ict_analysis_with_explanation(df)
 
                 if signal:
-                    trade_id = save_trade(signal, query.from_user.id)
-                    use_signal(query.from_user.id)
-                    await send_signal_with_ai(query.message, trade_id, signal, analysis, df, display)
+                    trade_id = save_trade(signal, user_id)
+                    use_signal(user_id)
+                    await send_signal(query.message, trade_id, signal, analysis, df, display)
                 else:
                     await query.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
             else:
@@ -412,14 +419,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== عملکرد =====
     if data == "performance":
         stats = get_statistics()
-        signals_left = get_user_signals_left(query.from_user.id)
+        signals_left = get_user_signals_left(user_id)
         await query.edit_message_text(
             f"📊 **آمار عملکرد**\n\n"
             f"📈 **کل معاملات:** {stats['total']}\n"
             f"✅ **برنده:** {stats['wins']}\n"
             f"❌ **بازنده:** {stats['losses']}\n"
-            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n"
-            f"💰 **فاکتور سود:** {stats['profit_factor']}\n\n"
+            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n\n"
             f"📊 **سیگنال باقی‌مانده امروز:** {signals_left}",
             reply_markup=user_keyboard(),
             parse_mode='Markdown'
@@ -428,7 +434,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== تاریخچه =====
     if data == "history":
-        trades = get_user_trades(query.from_user.id)
+        trades = get_user_trades(user_id)
         if trades:
             text = "📜 **تاریخچه معاملات:**\n\n"
             for i, t in enumerate(trades[:10], 1):
@@ -470,13 +476,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ============================================
 
     if data == "dashboard":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(dashboard(), reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
     if data == "users":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         users = get_all_users()
         text = f"👥 **کاربران**\n\n**کل:** {len(users)}\n\n"
@@ -486,16 +492,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "analytics":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         stats = get_statistics()
+        today_stats = get_today_stats()
         await query.edit_message_text(
             f"📈 **تحلیل پیشرفته**\n\n"
-            f"📊 **کل:** {stats['total']}\n"
+            f"📊 **کل معاملات:** {stats['total']}\n"
             f"✅ **برنده:** {stats['wins']}\n"
             f"❌ **بازنده:** {stats['losses']}\n"
-            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n"
-            f"💰 **فاکتور سود:** {stats['profit_factor']}",
+            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n\n"
+            f"📊 **آمار امروز:**\n"
+            f"• سیگنال‌های استفاده شده: {today_stats['signals_used']}\n"
+            f"• TP ثبت شده: {today_stats['tp_count']}\n"
+            f"• SL ثبت شده: {today_stats['sl_count']}",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
@@ -503,7 +513,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== تنظیمات ادمین =====
     if data == "set_daily_signal":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "📊 **تعداد سیگنال روزانه**\n\nعدد را وارد کنید (مثلاً 5):",
@@ -514,7 +524,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "set_rr":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "🎯 **نسبت RR**\n\nعدد را وارد کنید (مثلاً 2 برای 1:2):",
@@ -525,29 +535,18 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "set_timeframe":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
-            "⏱️ **تایم‌فریم**\n\nگزینه‌ها: 1min, 5min, 15min, 1h, 4h, 1d",
+            "⏱️ **تایم‌فریم پیش‌فرض**\n\nگزینه‌ها: 1min, 5min, 15min, 1h, 4h, 1d",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
         context.user_data['admin_action'] = 'set_timeframe'
         return
 
-    if data == "set_rsi":
-        if query.from_user.id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "📈 **محدوده RSI**\n\nدو عدد با فاصله (مثال: 30 70):",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'set_rsi'
-        return
-
     if data == "set_referral_bonus":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "👥 **پاداش رفرال**\n\nچند سیگنال به ازای هر رفرال؟ (مثال: 1)",
@@ -558,7 +557,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "set_referral_threshold":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "🎯 **آستانه رفرال**\n\nچند رفرال = افزایش سیگنال؟ (مثال: 5)",
@@ -570,42 +569,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== کنترل‌ها =====
     if data == "reset_signals":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         reset_daily_signals()
         await query.edit_message_text("🔄 **سیگنال‌های روزانه ریست شد!**", reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
     if data == "bot_lock":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         status = toggle_bot_lock()
         await query.edit_message_text(f"🔒 **قفل ربات:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
     if data == "signal_control":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         status = toggle_signal()
         await query.edit_message_text(f"🚀 **کنترل سیگنال:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
-    if data == "ai_control":
-        if query.from_user.id != ADMIN_ID:
-            return
-        status = toggle_ai()
-        await query.edit_message_text(f"🧠 **کنترل AI:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
-        return
-
-    if data == "vip_control":
-        if query.from_user.id != ADMIN_ID:
-            return
-        status = toggle_vip()
-        await query.edit_message_text(f"💎 **کنترل VIP:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
-        return
-
     if data == "channel_lock":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         status = toggle_channel_lock()
         await query.edit_message_text(f"🔒 **قفل کانال:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
@@ -613,7 +598,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== مدیریت کاربران =====
     if data == "vip_user":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "👑 **VIP کردن کاربر**\n\nآیدی عددی کاربر را وارد کنید:",
@@ -624,7 +609,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "delete_user":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "🗑️ **حذف کاربر**\n\nآیدی عددی کاربر را وارد کنید:",
@@ -635,7 +620,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "broadcast":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
             "📢 **ارسال همگانی**\n\nپیام خود را تایپ کنید:",
@@ -646,9 +631,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data == "reports":
-        if query.from_user.id != ADMIN_ID:
+        if user_id != ADMIN_ID:
             return
-        await query.edit_message_text(report(), reply_markup=admin_keyboard(), parse_mode='Markdown')
+        stats = get_statistics()
+        today_stats = get_today_stats()
+        users = get_users_count()
+        await query.edit_message_text(
+            f"📊 **گزارش کامل**\n\n"
+            f"👥 **کل کاربران:** {users}\n"
+            f"📈 **کل معاملات:** {stats['total']}\n"
+            f"✅ **برنده:** {stats['wins']}\n"
+            f"❌ **بازنده:** {stats['losses']}\n"
+            f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n\n"
+            f"📊 **آمار امروز:**\n"
+            f"• سیگنال‌های استفاده شده: {today_stats['signals_used']}\n"
+            f"• TP ثبت شده: {today_stats['tp_count']}\n"
+            f"• SL ثبت شده: {today_stats['sl_count']}",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
 # ============ مدیریت پیام‌ها ============
@@ -657,29 +658,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_activity(user_id)
     text = update.message.text
 
-    # ===== چت با AI =====
-    if context.user_data.get('ai_chat_mode', False):
-        ai_enabled = get_setting('ai_enabled') == 'true'
-        if not ai_enabled:
-            await update.message.reply_text("⛔ **AI غیرفعال است.**", parse_mode='Markdown')
-            return
-
-        await update.message.reply_text("🤔 **در حال فکر کردن...**", parse_mode='Markdown')
-
-        try:
-            response = await chat_with_groq(text)
-            if len(response) > 4000:
-                for i in range(0, len(response), 4000):
-                    await update.message.reply_text(response[i:i+4000], parse_mode='Markdown')
-            else:
-                await update.message.reply_text(response, parse_mode='Markdown')
-        except Exception as e:
-            await update.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
-        return
-
     # ===== ارسال همگانی =====
     if context.user_data.get('broadcast_mode', False):
-        if update.effective_user.id == ADMIN_ID:
+        if user_id == ADMIN_ID:
             if text.lower() == '/cancel':
                 context.user_data['broadcast_mode'] = False
                 await update.message.reply_text("⏹️ **لغو شد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
@@ -691,8 +672,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 try:
                     await context.bot.send_message(
                         chat_id=u['id'],
-                        text=f"📢 **پیام همگانی:**\n\n{text}",
-                        parse_mode='Markdown'
+                        text=f"{text}"
                     )
                     success += 1
                 except:
@@ -731,19 +711,9 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == 'set_timeframe':
             if text in ['1min', '5min', '15min', '1h', '4h', '1d']:
                 set_default_timeframe(text)
-                await update.message.reply_text(f"✅ **تایم‌فریم: {text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                await update.message.reply_text(f"✅ **تایم‌فریم پیش‌فرض: {text}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
                 await update.message.reply_text("❌ **گزینه نامعتبر!**\n1min, 5min, 15min, 1h, 4h, 1d", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            context.user_data['admin_action'] = None
-            return
-
-        if action == 'set_rsi':
-            parts = text.split()
-            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
-                set_rsi_limits(int(parts[0]), int(parts[1]))
-                await update.message.reply_text(f"✅ **محدوده RSI: {parts[0]} - {parts[1]}**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            else:
-                await update.message.reply_text("❌ **دو عدد با فاصله وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
 
@@ -789,12 +759,27 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+# ============ تابع ریست شبانه ============
+def reset_daily():
+    while True:
+        now = datetime.now(TEHRAN_TZ)
+        target = now.replace(hour=3, minute=30, second=0, microsecond=0)
+        if now >= target:
+            target += timedelta(days=1)
+        wait_seconds = (target - now).total_seconds()
+        time.sleep(wait_seconds)
+        reset_daily_signals()
+        logging.info("🔄 سیگنال‌های روزانه ریست شد.")
+
 # ============ اجرا ============
 def main():
     try:
         init_settings()
         create_database()
         create_users_table()
+
+        # ===== ریست شبانه =====
+        threading.Thread(target=reset_daily, daemon=True).start()
 
         app = Application.builder().token(TOKEN).build()
 
