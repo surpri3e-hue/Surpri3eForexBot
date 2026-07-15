@@ -28,8 +28,14 @@ def set_daily_signal_limit(value):
     return f"✅ تعداد سیگنال روزانه: {value}"
 
 def set_rr_ratio(value):
-    update_setting('rr_ratio', str(value))
-    return f"✅ نسبت RR: 1:{value}"
+    try:
+        value = float(value)
+        if value <= 0:
+            return "❌ مقدار باید بزرگتر از صفر باشد."
+        update_setting('rr_ratio', str(value))
+        return f"✅ نسبت RR به 1:{value} تغییر کرد."
+    except:
+        return "❌ لطفاً یک عدد معتبر وارد کنید."
 
 def set_default_timeframe(value):
     update_setting('default_timeframe', value)
