@@ -73,12 +73,16 @@ def get_today_stats():
     conn = connect()
     cursor = conn.cursor()
     today = datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d')
+    
     cursor.execute("SELECT COUNT(*) FROM trades WHERE date(time)=?", (today,))
     total = cursor.fetchone()[0]
+    
     cursor.execute("SELECT COUNT(*) FROM trades WHERE date(time)=? AND result='TP'", (today,))
     tp = cursor.fetchone()[0]
+    
     cursor.execute("SELECT COUNT(*) FROM trades WHERE date(time)=? AND result='SL'", (today,))
     sl = cursor.fetchone()[0]
+    
     conn.close()
     return {'signals_used': total, 'tp_count': tp, 'sl_count': sl}
 
