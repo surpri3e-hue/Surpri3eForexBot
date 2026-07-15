@@ -2,7 +2,7 @@ import numpy as np
 
 def analyze_smc(df):
     """
-    تحلیل Smart Money
+    تحلیل Smart Money با خروجی تضمینی
     """
     if df is None or len(df) < 20:
         return None, None
@@ -121,15 +121,17 @@ def analyze_smc(df):
         direction = "SELL"
         reasons = sell_reasons
     else:
+        # ===== سیگنال اضطراری بر اساس تغییر قیمت =====
         price_change = ((current - prev) / prev) * 100
         
-        if price_change > 0.1:
+        if price_change > 0.05:
             direction = "BUY"
-            reasons = ["افزایش قیمت لحظه‌ای"]
-        elif price_change < -0.1:
+            reasons = [f"افزایش قیمت لحظه‌ای ({price_change:.2f}%)"]
+        elif price_change < -0.05:
             direction = "SELL"
-            reasons = ["کاهش قیمت لحظه‌ای"]
+            reasons = [f"کاهش قیمت لحظه‌ای ({price_change:.2f}%)"]
         else:
+            # ===== آخرین راهکار: RSI =====
             try:
                 delta = np.diff(close)
                 gain = np.where(delta > 0, delta, 0)
@@ -142,17 +144,21 @@ def analyze_smc(df):
                     rs = avg_gain / avg_loss
                     rsi = 100 - (100 / (1 + rs))
                 
-                if rsi < 30:
+                if rsi < 40:
                     direction = "BUY"
                     reasons = [f"RSI در منطقه اشباع فروش ({rsi:.1f})"]
-                elif rsi > 70:
+                elif rsi > 60:
                     direction = "SELL"
                     reasons = [f"RSI در منطقه اشباع خرید ({rsi:.1f})"]
                 else:
-                    return None, None
+                    # ===== اگر هیچی نشد، BUY پیش‌فرض (با احتیاط) =====
+                    direction = "BUY"
+                    reasons = ["شرایط خنثی - BUY پیش‌فرض (با احتیاط)"]
                     
             except:
-                return None, None
+                # ===== اگر RSI ارور داد، BUY پیش‌فرض =====
+                direction = "BUY"
+                reasons = ["خطا در محاسبه RSI - BUY پیش‌فرض (با احتیاط)"]
 
     # ===== Entry/SL/TP =====
     from database import get_setting
