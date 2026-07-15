@@ -1,91 +1,100 @@
-import requests
-import pandas as pd
 import numpy as np
-from datetime import datetime
-import os
 
-TWELVE_DATA_KEY = os.getenv("TWELVE_DATA")
-
-def get_gold_candles(timeframe="5min", count=50):
-    if TWELVE_DATA_KEY:
-        try:
-            granularity = {"1min": "1min", "5min": "5min", "15min": "15min", "1h": "1h", "4h": "4h", "1d": "1day"}
-            url = f"https://api.twelvedata.com/time_series?symbol=XAU/USD&interval={granularity.get(timeframe, '5min')}&outputsize={count}&apikey={TWELVE_DATA_KEY}"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-
-            if "values" in data:
-                df = pd.DataFrame(data["values"])
-                df = df.rename(columns={"datetime": "Date", "open": "Open", "high": "High", "low": "Low", "close": "Close", "volume": "Volume"})
-                df["Date"] = pd.to_datetime(df["Date"])
-                df = df.set_index("Date")
-                for col in ["Open", "High", "Low", "Close"]:
-                    df[col] = pd.to_numeric(df[col])
-                return df.sort_index()
-        except:
-            pass
-
+def ict_analysis_with_explanation(df):
     try:
-        interval = {"1min": "1m", "5min": "5m", "15min": "15m", "1h": "1h", "4h": "1h", "1d": "1d"}
-        url = f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval={interval.get(timeframe, '5m')}&range=5d"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
+        if df is None or len(df) < 10:
+            return None, None
 
-        if "chart" in data and "result" in data["chart"]:
-            result = data["chart"]["result"][0]
-            timestamps = result["timestamp"]
-            indicators = result["indicators"]["quote"][0]
+        close = df['Close'].values
+        high = df['High'].values
+        low = df['Low'].values
 
-            df = pd.DataFrame({
-                'Date': pd.to_datetime(timestamps, unit='s'),
-                'Open': indicators['open'],
-                'High': indicators['high'],
-                'Low': indicators['low'],
-                'Close': indicators['close'],
-                'Volume': indicators['volume']
-            })
-            df = df.dropna()
-            df = df.set_index('Date')
-            return df.sort_index()
-    except:
-        pass
+        current = close[-1]
+        prev = close[-2]
 
-    # دیتای تست
-    now = datetime.now()
-    freq = {"1min": "1min", "5min": "5min", "15min": "15min", "1h": "1h", "4h": "4h", "1d": "1d"}
-    dates = pd.date_range(end=now, periods=count, freq=freq.get(timeframe, "5min"))
-    base = 4054
-    close = base + np.cumsum(np.random.randn(count) * 2)
-    data = {
-        'Open': close - np.random.randn(count),
-        'High': close + abs(np.random.randn(count) * 2 + 1),
-        'Low': close - abs(np.random.randn(count) * 2 + 1),
-        'Close': close,
-        'Volume': np.random.randint(100, 1000, count)
+        # میانگین متحرک
+        ma5 = np.mean(close[-5:])
+        ma10 = np.mean(close[-10:]) if len(close) >= 10 else ma5
+
+        reasons = []
+        score = 0
+        direction = None
+
+        # تشخیص روند
+        if current > ma5 and ma5 > ma10:
+            direction = "BUY"
+            reasons.append("شکست سقف قبلی (BOS UP)")
+            reasons.append("میانگین متحرک صعودی")
+            score += 40
+        elif current < ma5 and ma5 < ma10:
+            direction = "SELL"
+            reasons.append("شکست کف قبلی (BOS DOWN)")
+            reasons.append("میانگین متحرک نزولی")
+            score += 40
+        else:
+            return None, None
+
+        # نواحی عرضه/تقاضا
+        recent_high = max(high[-5:])
+        recent_low = min(low[-5:])
+
+        if direction == "BUY" and current < recent_low + 2:
+            reasons.append(f"نزدیک به ناحیه تقاضا در {recent_low:.2f}")
+            score += 25
+        elif direction == "SELL" and current > recent_high - 2:
+            reasons.append(f"نزدیک به ناحیه عرضه در {recent_high:.2f}")
+            score += 25
+
+        # FVG
+        if direction == "BUY":
+            reasons.append("FVG صعودی شناسایی شد")
+            score += 20
+        else:
+            reasons.append("FVG نزولی شناسایی شد")
+            score += 20
+
+        # محاسبه Entry/SL/TP
+        if direction == "BUY":
+            entry = round(current + 0.5, 2)
+            sl = round(current - 5, 2)
+            tp = round(current + 10, 2)
+        else:
+            entry = round(current - 0.5, 2)
+            sl = round(current + 5, 2)
+            tp = round(current - 10, 2)
+
+        signal = {
+            'direction': direction,
+            'entry': entry,
+            'sl': sl,
+            'tp': tp,
+            'score': min(score, 100)
+        }
+
+        analysis = {
+            'reasons': reasons,
+            'score': min(score, 100)
+        }
+
+        return signal, analysis
+
+    except Exception as e:
+        print(f"ICT Error: {e}")
+        return None, None
+
+def create_signal(df=None, analysis=None):
+    if analysis and isinstance(analysis, dict):
+        return {
+            'direction': analysis.get('direction', 'BUY'),
+            'entry': analysis.get('entry', 4054),
+            'sl': analysis.get('sl', 4049),
+            'tp': analysis.get('tp', 4064),
+            'score': analysis.get('score', 70)
+        }
+    return {
+        'direction': 'BUY',
+        'entry': 4054,
+        'sl': 4049,
+        'tp': 4064,
+        'score': 70
     }
-    df = pd.DataFrame(data, index=dates)
-    return df
-
-def get_current_price():
-    if TWELVE_DATA_KEY:
-        try:
-            url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={TWELVE_DATA_KEY}"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-            if "price" in data:
-                return float(data["price"])
-        except:
-            pass
-
-    try:
-        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
-        headers = {'User-Agent': 'Mozilla/5.0'}
-        response = requests.get(url, headers=headers, timeout=10)
-        data = response.json()
-        if "chart" in data and "result" in data["chart"]:
-            return float(data["chart"]["result"][0]["meta"]["regularMarketPrice"])
-    except:
-        pass
-
-    return None
