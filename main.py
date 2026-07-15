@@ -1,16 +1,10 @@
 import os
 import logging
-import io
-import pandas as pd
-import numpy as np
-import matplotlib.pyplot as plt
-import matplotlib.ticker as mticker
-from datetime import datetime, timedelta
+from datetime import datetime
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup,
-    InputFile
+    InlineKeyboardMarkup
 )
 from telegram.ext import (
     Application,
@@ -21,9 +15,9 @@ from telegram.ext import (
     filters
 )
 
-from market import get_gold_candles, get_current_price
-from ict import ict_analysis
-from signals import create_signal
+from market import get_current_price
+from signals import create_signal, ict_analysis_with_explanation
+from ai_deepseek import analyze_with_deepseek
 
 from database import (
     create_database,
@@ -48,8 +42,11 @@ from admin_tools import (
     dashboard,
     toggle_signal,
     toggle_channel_lock,
+    toggle_ai,
     ai_status,
-    logs_text
+    logs_text,
+    get_bot_settings,
+    update_setting
 )
 
 # ============ تنظیمات اولیه ============
@@ -64,6 +61,33 @@ SUPPORT_ID = "@RealSurprise"
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
+
+# ============ کیبورد کاربر ============
+def user_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🚨 دریافت سیگنال", callback_data="signal_menu")],
+        [
+            InlineKeyboardButton("📊 عملکرد", callback_data="performance"),
+            InlineKeyboardButton("📜 تاریخچه", callback_data="history")
+        ],
+        [
+            InlineKeyboardButton("💰 قیمت لحظه‌ای", callback_data="live_price"),
+            InlineKeyboardButton("💎 VIP", callback_data="vip")
+        ],
+        [
+            InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
+            InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")
+        ],
+        [InlineKeyboardButton("🤖 چت با AI", callback_data="ai_chat")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+# ============ کیبورد حالت چت AI ============
+def ai_chat_keyboard():
+    keyboard = [
+        [InlineKeyboardButton("🔙 بازگشت", callback_data="back_from_ai")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
 # ============ کیبورد انتخاب تایم‌فریم ============
 def timeframe_keyboard():
@@ -82,25 +106,6 @@ def timeframe_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ کیبورد کاربر ============
-def user_keyboard():
-    keyboard = [
-        [InlineKeyboardButton("🚨 دریافت سیگنال", callback_data="signal_menu")],
-        [
-            InlineKeyboardButton("📊 عملکرد", callback_data="performance"),
-            InlineKeyboardButton("📜 تاریخچه", callback_data="history")
-        ],
-        [
-            InlineKeyboardButton("💰 قیمت لحظه‌ای", callback_data="live_price"),
-            InlineKeyboardButton("💎 VIP", callback_data="vip")
-        ],
-        [
-            InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
-            InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
 # ============ کیبورد ادمین ============
 def admin_keyboard():
     keyboard = [
@@ -109,10 +114,18 @@ def admin_keyboard():
             InlineKeyboardButton("👥 Users", callback_data="users"),
             InlineKeyboardButton("📈 Analytics", callback_data="analytics")
         ],
-        [InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control")],
-        [InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock")],
-        [InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings")],
-        [InlineKeyboardButton("📜 Logs", callback_data="logs")],
+        [
+            InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control"),
+            InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock")
+        ],
+        [
+            InlineKeyboardButton("🧠 AI Settings", callback_data="ai_settings"),
+            InlineKeyboardButton("📜 Logs", callback_data="logs")
+        ],
+        [
+            InlineKeyboardButton("📢 Broadcast", callback_data="broadcast"),
+            InlineKeyboardButton("📊 Reports", callback_data="reports")
+        ],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -128,190 +141,69 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ تابع تولید چارت مثل تریدینگ ویو ============
-def generate_chart_tradingview(df, signal, timeframe):
-    """
-    تولید چارت دقیقاً مثل تصویر تریدینگ ویو
-    """
-    try:
-        df_copy = df.tail(50).copy()
-        
-        plt.style.use('dark_background')
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1,
-            figsize=(16, 10),
-            gridspec_kw={'height_ratios': [3.5, 1]},
-            sharex=True,
-            facecolor='#131722'
-        )
-        
-        # ===== کندل‌ها =====
-        width = 0.7
-        body_width = 0.9
-        wick_width = 0.05
-        
-        up = df_copy[df_copy['Close'] >= df_copy['Open']]
-        down = df_copy[df_copy['Close'] < df_copy['Open']]
-        
-        # صعودی
-        if not up.empty:
-            ax1.bar(up.index, up['Close'] - up['Open'], body_width, 
-                    bottom=up['Open'], color='#26a69a', edgecolor='#26a69a')
-            ax1.bar(up.index, up['High'] - up['Close'], wick_width, 
-                    bottom=up['Close'], color='#26a69a')
-            ax1.bar(up.index, up['Low'] - up['Open'], wick_width, 
-                    bottom=up['Open'], color='#26a69a')
-        
-        # نزولی
-        if not down.empty:
-            ax1.bar(down.index, down['Close'] - down['Open'], body_width, 
-                    bottom=down['Open'], color='#ef5350', edgecolor='#ef5350')
-            ax1.bar(down.index, down['High'] - down['Open'], wick_width, 
-                    bottom=down['Open'], color='#ef5350')
-            ax1.bar(down.index, down['Low'] - down['Close'], wick_width, 
-                    bottom=down['Close'], color='#ef5350')
-        
-        # ===== قیمت بالا و پایین =====
-        high_price = df_copy['High'].max()
-        low_price = df_copy['Low'].min()
-        price_range = high_price - low_price
-        
-        # ===== خطوط سیگنال =====
-        entry = signal['entry']
-        
-        if signal['direction'] == 'BUY':
-            sl = round(entry - 5, 2)
-            tp = round(entry + 10, 2)
-        else:
-            sl = round(entry + 5, 2)
-            tp = round(entry - 10, 2)
-        
-        signal['sl'] = sl
-        signal['tp'] = tp
-        
-        # ===== نمایش قیمت بالا و پایین =====
-        ax1.axhline(y=high_price, color='#787b86', linestyle='-', linewidth=0.5, alpha=0.3)
-        ax1.text(df_copy.index[-1], high_price, f'{high_price:.2f}', 
-                color='#787b86', fontsize=9,
-                verticalalignment='bottom', horizontalalignment='right')
-        
-        ax1.axhline(y=low_price, color='#787b86', linestyle='-', linewidth=0.5, alpha=0.3)
-        ax1.text(df_copy.index[-1], low_price, f'{low_price:.2f}', 
-                color='#787b86', fontsize=9,
-                verticalalignment='top', horizontalalignment='right')
-        
-        # ===== خطوط سیگنال =====
-        ax1.axhline(y=entry, color='#2962ff', linestyle='--', linewidth=2)
-        ax1.text(df_copy.index[-1], entry, f'Entry {entry:.2f}', 
-                color='#2962ff', fontsize=10, fontweight='bold',
-                verticalalignment='bottom', horizontalalignment='right')
-        
-        ax1.axhline(y=sl, color='#ff1744', linestyle='--', linewidth=2)
-        ax1.text(df_copy.index[-1], sl, f'SL {sl:.2f}', 
-                color='#ff1744', fontsize=10, fontweight='bold',
-                verticalalignment='top', horizontalalignment='right')
-        
-        ax1.axhline(y=tp, color='#00e676', linestyle='--', linewidth=2)
-        ax1.text(df_copy.index[-1], tp, f'TP {tp:.2f}', 
-                color='#00e676', fontsize=10, fontweight='bold',
-                verticalalignment='bottom', horizontalalignment='right')
-        
-        # ===== نواحی =====
-        ax1.axhspan(min(entry, sl), max(entry, sl), alpha=0.1, color='red')
-        ax1.axhspan(min(entry, tp), max(entry, tp), alpha=0.1, color='green')
-        
-        # ===== تنظیمات =====
-        ax1.set_title(f'XAUUSD - {timeframe}', fontsize=16, fontweight='bold', 
-                      color='white', pad=15)
-        ax1.set_ylabel('Price', fontsize=11, color='#787b86')
-        ax1.tick_params(colors='#787b86', labelsize=9)
-        ax1.grid(True, alpha=0.1, color='#2a2e39')
-        ax1.set_facecolor('#131722')
-        
-        # ===== قیمت فعلی =====
-        current = df_copy['Close'].iloc[-1]
-        ax1.text(0.98, 0.02, f'{current:.2f}', transform=ax1.transAxes,
-                color='white', fontsize=14, fontweight='bold',
-                horizontalalignment='right', verticalalignment='bottom',
-                bbox=dict(boxstyle='round,pad=0.4', facecolor='#2962ff', alpha=0.9))
-        
-        # ===== RR =====
-        risk = abs(entry - sl)
-        reward = abs(tp - entry)
-        rr = round(reward / risk, 2) if risk > 0 else 2.0
-        
-        direction = 'BUY' if signal['direction'] == 'BUY' else 'SELL'
-        
-        # ===== اطلاعات =====
-        info_text = f'{direction}  |  RR 1:{rr}  |  Score {signal.get("score", 0)}'
-        ax1.text(0.5, 0.98, info_text, transform=ax1.transAxes,
-                color='white', fontsize=12, fontweight='bold',
-                horizontalalignment='center', verticalalignment='top',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='#2a2e39', alpha=0.8))
-        
-        # ===== حجم =====
-        colors = ['#26a69a' if df_copy['Close'].iloc[i] >= df_copy['Open'].iloc[i] else '#ef5350' 
-                  for i in range(len(df_copy))]
-        ax2.bar(df_copy.index, df_copy['Volume'], color=colors, alpha=0.7)
-        ax2.set_ylabel('Volume', fontsize=11, color='#787b86')
-        ax2.tick_params(colors='#787b86', labelsize=9)
-        ax2.grid(True, alpha=0.1, color='#2a2e39')
-        ax2.set_facecolor('#131722')
-        
-        plt.setp(ax1.get_xticklabels(), visible=False)
-        plt.tight_layout()
-        
-        buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', 
-                    facecolor='#131722')
-        buf.seek(0)
-        plt.close('all')
-        
-        return buf
-        
-    except Exception as e:
-        logging.error(f"Chart error: {e}")
-        return None
+# ============ ارسال سیگنال با تحلیل ICT و دیپ سیک ============
+async def send_signal_with_ai(target, trade_id, signal, analysis, df, timeframe):
+    """ارسال سیگنال با تحلیل ICT و نظر دیپ سیک"""
+    
+    # ===== تحلیل ICT =====
+    ict_text = f"""
+📊 **تحلیل ICT:**
 
-# ============ ارسال سیگنال ============
-async def send_signal_with_chart(target, trade_id, signal, df, timeframe):
-    chart_buf = generate_chart_tradingview(df, signal, timeframe)
+**جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
+**ورود:** {signal['entry']:.2f}
+**حد ضرر:** {signal['sl']:.2f}
+**حد سود:** {signal['tp']:.2f}
+
+**دلایل:**
+{chr(10).join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])}
+
+**امتیاز:** {analysis.get('score', 0)}
+"""
     
-    current_price = get_current_price()
+    # ===== نظر دیپ سیک (اگه فعال باشه) =====
+    settings = get_bot_settings()
+    ai_enabled = settings.get('ai_enabled', 'true') == 'true'
     
-    message = (
-        f"🚨 **سیگنال جدید**\n\n"
-        f"⏱️ **تایم‌فریم:** {timeframe}\n"
-        f"💰 **قیمت لحظه‌ای:** {current_price if current_price else df['Close'].iloc[-1]:.2f}\n\n"
-        f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
-        f"📍 **ورود:** {signal['entry']:.2f}\n"
-        f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
-        f"🎯 **حد سود (TP):** {signal['tp']:.2f}\n"
-        f"⭐ **امتیاز:** {signal.get('score', 0)}\n"
-        f"📊 **ریسک به ریوارد:** 1:2 (ثابت)\n"
-        f"📡 **منبع:** {signal.get('source', 'ICT')}\n\n"
-        f"👇 نتیجه معامله را انتخاب کنید:"
-    )
-    
-    if chart_buf:
-        await target.reply_photo(
-            photo=InputFile(chart_buf, filename="chart.png"),
-            caption=message,
-            reply_markup=signal_result_keyboard(trade_id),
-            parse_mode='Markdown'
-        )
+    if ai_enabled:
+        ai_text = f"""
+🤖 **نظر دیپ سیک:**
+
+{analyze_with_deepseek(df, signal, analysis)}
+"""
     else:
-        await target.reply_text(
-            message,
-            reply_markup=signal_result_keyboard(trade_id),
-            parse_mode='Markdown'
-        )
+        ai_text = """
+🤖 **دیپ سیک:** غیرفعال (توسط ادمین)
+"""
+    
+    # ===== ترکیب نهایی =====
+    message = f"""
+🚨 **سیگنال جدید**
+
+{ict_text}
+
+{ai_text}
+
+⏱️ **تایم‌فریم:** {timeframe}
+💰 **قیمت لحظه‌ای:** {df['Close'].iloc[-1]:.2f}
+📡 **زمان:** {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}
+
+👇 نتیجه معامله را انتخاب کنید:
+"""
+    
+    await target.reply_text(
+        message,
+        reply_markup=signal_result_keyboard(trade_id),
+        parse_mode='Markdown'
+    )
 
 # ============ دستور /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     add_user(user_id)
     update_activity(user_id)
+    
+    # خروج از حالت چت AI
+    context.user_data['ai_chat_mode'] = False
     
     await update.message.reply_text(
         "🤖 **Surpri3e AI Scanner**\n\n"
@@ -320,6 +212,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🔹 تایم‌فریم مورد نظر را انتخاب کنید\n"
         "🔹 آمار عملکرد خود را در 📊 ببینید\n"
         "🔹 قیمت لحظه‌ای طلا را در 💰 ببینید\n"
+        "🔹 با 🤖 چت با AI صحبت کنید\n"
         "🔹 برای ارتباط با پشتیبانی روی 🆘 کلیک کنید\n\n"
         "موفق باشید! 🍀",
         reply_markup=user_keyboard(),
@@ -375,9 +268,38 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== برگشت =====
     if data == "back":
+        context.user_data['ai_chat_mode'] = False
         await query.edit_message_text(
             "🤖 **Surpri3e AI Scanner**\n\nبه پنل خوش آمدید",
             reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== برگشت از چت AI =====
+    if data == "back_from_ai":
+        context.user_data['ai_chat_mode'] = False
+        await query.edit_message_text(
+            "🔙 **بازگشت به منو**\n\nبرای ادامه از دکمه‌های زیر استفاده کنید:",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== چت با AI =====
+    if data == "ai_chat":
+        context.user_data['ai_chat_mode'] = True
+        await query.edit_message_text(
+            "🤖 **حالت چت با AI فعال شد!**\n\n"
+            "هر سوالی درباره طلا، ترید، تحلیل بازار یا هر موضوع دیگه‌ای داری، بپرس.\n\n"
+            "💡 **پیشنهاد:**\n"
+            "• طلا الان چطوره؟\n"
+            "• تحلیل طلا امروز\n"
+            "• آموزش ترید برای مبتدیان\n"
+            "• حد ضرر چیه؟\n"
+            "• استراتژی ICT چیه؟\n\n"
+            "برای خروج از حالت چت، دکمه 🔙 بازگشت رو بزن.",
+            reply_markup=ai_chat_keyboard(),
             parse_mode='Markdown'
         )
         return
@@ -393,45 +315,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             price = get_current_price()
             
             if price:
-                # دریافت تغییرات
-                change = 0
-                try:
-                    import requests
-                    url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
-                    headers = {'User-Agent': 'Mozilla/5.0'}
-                    response = requests.get(url, headers=headers, timeout=10)
-                    data = response.json()
-                    if "chart" in data and "result" in data["chart"]:
-                        result = data["chart"]["result"][0]
-                        meta = result["meta"]
-                        prev_close = meta.get("previousClose", price)
-                        change = price - prev_close
-                except:
-                    pass
-                
-                change_emoji = "🟢" if change > 0 else "🔴" if change < 0 else "⚪"
-                
-                message = (
+                await query.edit_message_text(
                     f"💰 **قیمت لحظه‌ای طلا**\n\n"
                     f"📊 **XAU/USD**\n\n"
                     f"💵 **قیمت:** {price:.2f} USD\n"
-                    f"📈 **تغییر:** {change_emoji} {change:+.2f}\n\n"
                     f"🕐 **آخرین بروزرسانی:** {datetime.now().strftime('%H:%M:%S')}\n\n"
-                    f"برای دریافت سیگنال روی 🚨 کلیک کنید."
+                    f"برای دریافت سیگنال روی 🚨 کلیک کنید.",
+                    reply_markup=user_keyboard(),
+                    parse_mode='Markdown'
                 )
             else:
-                message = "❌ **خطا در دریافت قیمت**\n\nلطفاً دوباره تلاش کنید."
-            
-            await query.edit_message_text(
-                message,
-                reply_markup=user_keyboard(),
-                parse_mode='Markdown'
-            )
-            
+                await query.edit_message_text(
+                    "❌ **خطا در دریافت قیمت**\n\nلطفاً دوباره تلاش کنید.",
+                    reply_markup=user_keyboard(),
+                    parse_mode='Markdown'
+                )
         except Exception as e:
             logging.error(f"Price error: {e}")
             await query.edit_message_text(
-                "❌ **خطا در دریافت قیمت**\n\nلطفاً دوباره تلاش کنید.",
+                "❌ **خطا در دریافت قیمت**",
                 reply_markup=user_keyboard(),
                 parse_mode='Markdown'
             )
@@ -476,49 +378,48 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_timeframe = data.replace("tf_", "")
         
         await query.edit_message_text(
-            f"🔍 **در حال دریافت قیمت لحظه‌ای و سیگنال...**",
+            f"🔍 **در حال تحلیل طلا ({display_timeframe})...**",
             parse_mode='Markdown'
         )
         
         try:
-            current_price = get_current_price()
+            from market import get_gold_candles
+            from signals import create_signal, ict_analysis_with_explanation
+            
             df = get_gold_candles(timeframe)
             
-            analysis = ict_analysis(df) if df is not None else None
-            signal = create_signal(df, analysis)
-            
-            if signal:
-                if current_price:
-                    signal['entry'] = round(current_price, 2)
+            if df is not None and not df.empty:
+                signal, analysis = ict_analysis_with_explanation(df)
                 
-                trade_id = save_trade(signal)
-                
-                if df is not None and not df.empty:
-                    await send_signal_with_chart(query.message, trade_id, signal, df, display_timeframe)
-                else:
-                    message = (
-                        f"🚨 **سیگنال جدید**\n\n"
-                        f"💰 **قیمت لحظه‌ای:** {current_price if current_price else 'N/A'}\n"
-                        f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
-                        f"📍 **ورود:** {signal['entry']:.2f}\n"
-                        f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
-                        f"🎯 **حد سود (TP):** {signal['tp']:.2f}\n"
-                        f"⭐ **امتیاز:** {signal.get('score', 0)}\n"
-                        f"📊 **ریسک به ریوارد:** 1:2 (ثابت)\n"
-                        f"📡 **منبع:** {signal.get('source', 'ICT')}\n\n"
-                        f"👇 نتیجه معامله را انتخاب کنید:"
+                if signal:
+                    trade_id = save_trade(signal)
+                    await send_signal_with_ai(
+                        query.message,
+                        trade_id,
+                        signal,
+                        analysis,
+                        df,
+                        display_timeframe
                     )
+                else:
                     await query.message.reply_text(
-                        message,
-                        reply_markup=signal_result_keyboard(trade_id),
+                        "❌ **سیگنالی پیدا نشد**\n\n"
+                        "سعی کنید تایم‌فریم دیگری را انتخاب کنید.",
                         parse_mode='Markdown'
                     )
             else:
-                await query.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
+                await query.message.reply_text(
+                    "❌ **خطا در دریافت داده**\n\n"
+                    "لطفاً دوباره تلاش کنید.",
+                    parse_mode='Markdown'
+                )
                 
         except Exception as e:
             logging.error(f"Signal error: {e}")
-            await query.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
+            await query.message.reply_text(
+                f"❌ **خطا:** {str(e)}",
+                parse_mode='Markdown'
+            )
         return
 
     # ===== عملکرد =====
@@ -545,7 +446,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result = trade.get('result', 'در انتظار')
                 emoji = "✅" if result == "TP" else "❌" if result == "SL" else "⏳"
                 text += f"{i}. {trade['direction']} | ورود: {trade['entry']} | {emoji} {result}\n"
-            await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
+            await query.edit_message_text(
+                text,
+                reply_markup=user_keyboard(),
+                parse_mode='Markdown'
+            )
         else:
             await query.edit_message_text(
                 "📭 **هنوز معامله‌ای ندارید!**",
@@ -575,7 +480,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔹 **تایم‌فریم پیش‌فرض:** {settings.get('default_timeframe', '5min')}\n"
             f"🔹 **هشدار:** {'فعال' if settings.get('alert', True) else 'غیرفعال'}\n"
             f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n"
-            f"🔹 **ارسال چارت:** {'فعال' if settings.get('send_chart', True) else 'غیرفعال'}\n"
             f"🔹 **نسبت RR:** 1:2 (ثابت)\n\n"
             "تنظیمات بیشتر به زودی اضافه میشه!",
             reply_markup=user_keyboard(),
@@ -601,7 +505,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"👥 **کاربران**\n\n**کل کاربران:** {len(users)}\n\n"
         for user in users[:20]:
             text += f"🆔 {user['id']} | فعال: {user['last_active']}\n"
-        await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "analytics":
@@ -645,8 +553,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "ai_settings":
         if query.from_user.id != ADMIN_ID:
             return
+        status = toggle_ai()
         await query.edit_message_text(
-            ai_status(),
+            f"🧠 **تنظیمات AI**\n\n**وضعیت:** {status}\n\n"
+            f"• فعال/غیرفعال کردن دیپ سیک\n"
+            f"• تنظیم تعداد درخواست‌ها\n"
+            f"• مشاهده مصرف API",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
@@ -662,15 +574,183 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-# ============ پیام‌های متنی ============
+    if data == "broadcast":
+        if query.from_user.id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            "📢 **ارسال همگانی**\n\n"
+            "پیام خود را تایپ کنید.\n"
+            "این پیام برای همه کاربران ارسال خواهد شد.\n\n"
+            "⏹️ برای لغو، /cancel را بفرستید.",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data['broadcast_mode'] = True
+        return
+
+    if data == "reports":
+        if query.from_user.id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            f"📊 **گزارشات**\n\n"
+            f"📈 **گزارش روزانه:**\n{create_report()}\n\n"
+            f"📊 **آمار کاربران:**\n• کل: {get_users_count()}\n"
+            f"• فعال امروز: {get_active_users_today()}\n\n"
+            f"📈 **آمار معاملات:**\n{get_statistics()}",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+# ============ مدیریت پیام‌های متنی ============
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     update_activity(user_id)
     
+    text = update.message.text
+    
+    # ===== حالت چت با AI =====
+    if context.user_data.get('ai_chat_mode', False):
+        # چک کردن فعال بودن AI
+        settings = get_bot_settings()
+        ai_enabled = settings.get('ai_enabled', 'true') == 'true'
+        
+        if not ai_enabled:
+            await update.message.reply_text(
+                "⛔ **AI در حال حاضر غیرفعال است.**\n"
+                "لطفاً بعداً تلاش کنید یا با ادمین تماس بگیرید.",
+                parse_mode='Markdown'
+            )
+            return
+        
+        # ارسال به دیپ سیک
+        await update.message.reply_text(
+            "🤔 **در حال فکر کردن...**",
+            parse_mode='Markdown'
+        )
+        
+        try:
+            # دریافت پاسخ از دیپ سیک
+            response = await chat_with_deepseek(text)
+            
+            # ارسال پاسخ (با تقسیم به بخش‌های کوچک)
+            if len(response) > 4000:
+                parts = [response[i:i+4000] for i in range(0, len(response), 4000)]
+                for part in parts:
+                    await update.message.reply_text(
+                        part,
+                        parse_mode='Markdown'
+                    )
+            else:
+                await update.message.reply_text(
+                    response,
+                    parse_mode='Markdown'
+                )
+                
+        except Exception as e:
+            logging.error(f"AI chat error: {e}")
+            await update.message.reply_text(
+                f"❌ **خطا در ارتباط با AI:** {str(e)}",
+                parse_mode='Markdown'
+            )
+        return
+    
+    # ===== حالت ارسال همگانی =====
+    if context.user_data.get('broadcast_mode', False):
+        if update.effective_user.id == ADMIN_ID:
+            if text.lower() == '/cancel':
+                context.user_data['broadcast_mode'] = False
+                await update.message.reply_text(
+                    "⏹️ **ارسال همگانی لغو شد.**",
+                    reply_markup=admin_keyboard(),
+                    parse_mode='Markdown'
+                )
+                return
+            
+            # ارسال به همه کاربران
+            users = get_all_users()
+            success = 0
+            fail = 0
+            
+            await update.message.reply_text(
+                f"📤 **در حال ارسال به {len(users)} کاربر...**",
+                parse_mode='Markdown'
+            )
+            
+            for user in users:
+                try:
+                    await context.bot.send_message(
+                        chat_id=user['id'],
+                        text=f"📢 **پیام همگانی از ادمین:**\n\n{text}",
+                        parse_mode='Markdown'
+                    )
+                    success += 1
+                except:
+                    fail += 1
+            
+            context.user_data['broadcast_mode'] = False
+            
+            await update.message.reply_text(
+                f"✅ **ارسال همگانی انجام شد!**\n\n"
+                f"✅ موفق: {success}\n"
+                f"❌ ناموفق: {fail}",
+                reply_markup=admin_keyboard(),
+                parse_mode='Markdown'
+            )
+        return
+    
+    # ===== پیام معمولی =====
     await update.message.reply_text(
-        "❌ **لطفاً از دکمه‌ها استفاده کنید!**\n\nبرای دریافت سیگنال، روی دکمه 🚨 کلیک کنید.",
+        "❌ **لطفاً از دکمه‌ها استفاده کنید!**\n\n"
+        "برای دریافت سیگنال، روی دکمه 🚨 کلیک کنید.\n"
+        "برای چت با AI، روی دکمه 🤖 چت با AI کلیک کنید.",
         parse_mode='Markdown'
     )
+
+# ============ چت با دیپ سیک ============
+async def chat_with_deepseek(question):
+    """
+    ارسال سوال به دیپ سیک و دریافت پاسخ
+    """
+    import requests
+    import json
+    
+    DEEPSEEK_API_KEY = os.getenv("DEEPSEEK_API_KEY")
+    
+    if not DEEPSEEK_API_KEY:
+        return "⚠️ دیپ سیک فعال نیست. لطفاً API Key را تنظیم کنید."
+    
+    try:
+        headers = {
+            "Authorization": f"Bearer {DEEPSEEK_API_KEY}",
+            "Content-Type": "application/json"
+        }
+        
+        payload = {
+            "model": "deepseek-chat",
+            "messages": [
+                {"role": "system", "content": "شما یک تحلیلگر حرفه‌ای بازارهای مالی با سبک ICT هستید. به زبان فارسی پاسخ دهید."},
+                {"role": "user", "content": question}
+            ],
+            "temperature": 0.7,
+            "max_tokens": 2000
+        }
+        
+        response = requests.post(
+            "https://api.deepseek.com/v1/chat/completions",
+            headers=headers,
+            json=payload,
+            timeout=30
+        )
+        
+        if response.status_code == 200:
+            result = response.json()
+            return result['choices'][0]['message']['content']
+        else:
+            return f"⚠️ خطا در ارتباط با دیپ سیک: {response.status_code}"
+            
+    except Exception as e:
+        return f"⚠️ خطا: {str(e)}"
 
 # ============ اجرای اصلی ============
 def main():
