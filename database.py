@@ -202,7 +202,6 @@ def delete_user(user_id):
 
 # ============ RR اختصاصی کاربر ============
 def set_user_rr(user_id, rr):
-    """تنظیم RR اختصاصی برای هر کاربر"""
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET rr_ratio=? WHERE id=?", (rr, user_id))
@@ -210,7 +209,6 @@ def set_user_rr(user_id, rr):
     conn.close()
 
 def get_user_rr(user_id):
-    """دریافت RR اختصاصی کاربر"""
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("SELECT rr_ratio FROM users WHERE id=?", (user_id,))
@@ -222,7 +220,6 @@ def get_user_rr(user_id):
 
 # ============ آمار هفتگی و ماهانه ============
 def get_weekly_stats():
-    """دریافت وین‌ریت هفته جاری"""
     conn = connect()
     cursor = conn.cursor()
     
@@ -243,7 +240,6 @@ def get_weekly_stats():
     return {'total': total, 'wins': wins, 'winrate': winrate}
 
 def get_monthly_stats():
-    """دریافت وین‌ریت ماه جاری"""
     conn = connect()
     cursor = conn.cursor()
     
@@ -265,7 +261,6 @@ def get_monthly_stats():
 
 # ============ مدیریت سیگنال روزانه ============
 def reset_daily_signals():
-    """ریست کردن سیگنال‌های روزانه همه کاربران"""
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET signals_used_today = 0, last_signal_reset = CURRENT_TIMESTAMP")
@@ -273,7 +268,6 @@ def reset_daily_signals():
     conn.close()
 
 def get_user_signals_left(user_id):
-    """دریافت تعداد سیگنال باقی‌مانده کاربر"""
     import os
     ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 
@@ -295,7 +289,6 @@ def get_user_signals_left(user_id):
     return 0
 
 def use_signal(user_id):
-    """استفاده از یک سیگنال"""
     import os
     ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 
@@ -311,6 +304,15 @@ def use_signal(user_id):
     conn.commit()
     conn.close()
     return True
+
+def get_active_users_today():
+    conn = connect()
+    cursor = conn.cursor()
+    today = datetime.now().strftime('%Y-%m-%d')
+    cursor.execute("SELECT COUNT(*) FROM users WHERE date(last_active)=?", (today,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0
 
 # ============ معاملات ============
 def save_trade(signal, user_id=0, style='ZIGZAG'):
@@ -402,12 +404,3 @@ def get_today_stats():
 
     conn.close()
     return {'signals_used': total, 'tp_count': tp, 'sl_count': sl}
-
-def get_active_users_today():
-    conn = connect()
-    cursor = conn.cursor()
-    today = datetime.now().strftime('%Y-%m-%d')
-    cursor.execute("SELECT COUNT(*) FROM users WHERE date(last_active)=?", (today,))
-    result = cursor.fetchone()
-    conn.close()
-    return result[0] if result else 0
