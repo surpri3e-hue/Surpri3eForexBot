@@ -72,7 +72,7 @@ logging.basicConfig(
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 SUPPORT_ID = "@RealSurprise"
-CHANNEL_ID = os.getenv("CHANNEL_ID")  # مثلاً @MyChannel
+CHANNEL_ID = os.getenv("CHANNEL_ID")
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
@@ -121,7 +121,7 @@ def admin_keyboard():
         [InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
         [
             InlineKeyboardButton("👥 Users", callback_data="users"),
-            InKeyboardButton("📈 Analytics", callback_data="analytics")
+            InlineKeyboardButton("📈 Analytics", callback_data="analytics")
         ],
         [
             InlineKeyboardButton("📊 Set Daily Signal", callback_data="set_daily_signal"),
@@ -173,18 +173,35 @@ async def check_channel_membership(user_id, context):
     except:
         return False
 
-# ============ ارسال سیگنال ============
+# ============ ارسال سیگنال (اصلاح شده) ============
 async def send_signal(target, trade_id, signal, analysis, df, timeframe):
     current_price = get_current_price()
     tehran_time = get_tehran_time()
+    
+    if not current_price:
+        current_price = df['Close'].iloc[-1]
+    
+    # ===== اصلاح Entry/SL/TP با قیمت لحظه‌ای =====
+    if signal['direction'] == 'BUY':
+        entry = round(current_price, 2)
+        sl = round(current_price - 5, 2)
+        tp = round(current_price + 10, 2)
+    else:
+        entry = round(current_price, 2)
+        sl = round(current_price + 5, 2)
+        tp = round(current_price - 10, 2)
+    
+    signal['entry'] = entry
+    signal['sl'] = sl
+    signal['tp'] = tp
     
     ict_text = f"""
 📊 **تحلیل ICT:**
 
 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
-**ورود:** {signal['entry']:.2f}
-**حد ضرر:** {signal['sl']:.2f}
-**حد سود:** {signal['tp']:.2f}
+**ورود:** {entry:.2f}
+**حد ضرر (SL):** {sl:.2f}
+**حد سود (TP):** {tp:.2f}
 
 **دلایل:**
 {chr(10).join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])}
@@ -198,7 +215,7 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe):
 {ict_text}
 
 ⏱️ **تایم‌فریم:** {timeframe}
-💰 **قیمت لحظه‌ای:** {current_price if current_price else df['Close'].iloc[-1]:.2f}
+💰 **قیمت لحظه‌ای:** {current_price:.2f}
 🕐 **زمان تهران:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
 
 👇 نتیجه معامله را انتخاب کنید:
@@ -214,12 +231,10 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     
-    # ===== چک کردن قفل ربات =====
     if get_setting('bot_locked') == 'true':
         await update.message.reply_text("🔒 **ربات در حال حاضر قفل است.**\nلطفاً بعداً تلاش کنید.")
         return
     
-    # ===== چک کردن عضویت در کانال =====
     if CHANNEL_ID:
         is_member = await check_channel_membership(user_id, context)
         if not is_member:
@@ -266,12 +281,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     data = query.data
     user_id = query.from_user.id
 
-    # ===== چک کردن قفل ربات =====
     if get_setting('bot_locked') == 'true' and user_id != ADMIN_ID:
         await query.edit_message_text("🔒 **ربات قفل است.**")
         return
 
-    # ===== چک کردن عضویت در کانال =====
     if CHANNEL_ID and user_id != ADMIN_ID:
         is_member = await check_channel_membership(user_id, context)
         if not is_member:
@@ -338,7 +351,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             else:
                 await query.edit_message_text(
-                    "❌ **خطا در دریافت قیمت**",
+                    "❌ **خطا در دریافت قیمت**\n\nلطفاً دوباره تلاش کنید.",
                     reply_markup=user_keyboard(),
                     parse_mode='Markdown'
                 )
@@ -374,7 +387,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== انتخاب تایم‌فریم =====
     if data.startswith("tf_"):
-        # چک کردن فعال بودن سیگنال
         if get_setting('signal_enabled') != 'true':
             await query.message.reply_text("⛔ **سیگنال‌دهی غیرفعال است.**", parse_mode='Markdown')
             return
@@ -386,7 +398,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timeframe = timeframe_map.get(data, "5min")
         display = data.replace("tf_", "")
 
-        # ===== چک کردن تعداد سیگنال باقی‌مانده =====
         signals_left = get_user_signals_left(user_id)
         if signals_left <= 0:
             await query.message.reply_text(
@@ -658,7 +669,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     update_activity(user_id)
     text = update.message.text
 
-    # ===== ارسال همگانی =====
     if context.user_data.get('broadcast_mode', False):
         if user_id == ADMIN_ID:
             if text.lower() == '/cancel':
@@ -686,7 +696,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # ===== ورودی‌های ادمین =====
     if context.user_data.get('admin_action'):
         action = context.user_data['admin_action']
         
@@ -759,7 +768,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ============ تابع ریست شبانه ============
+# ============ ریست شبانه ============
 def reset_daily():
     while True:
         now = datetime.now(TEHRAN_TZ)
@@ -778,7 +787,6 @@ def main():
         create_database()
         create_users_table()
 
-        # ===== ریست شبانه =====
         threading.Thread(target=reset_daily, daemon=True).start()
 
         app = Application.builder().token(TOKEN).build()
