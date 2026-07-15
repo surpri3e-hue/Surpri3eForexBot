@@ -83,7 +83,8 @@ def language_keyboard():
         [InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa")],
         [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
         [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")]
+        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
+        [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -92,6 +93,7 @@ def style_keyboard(lang='fa'):
     keyboard = [
         [InlineKeyboardButton("📊 ICT", callback_data="style_ict")],
         [InlineKeyboardButton("💰 Smart Money (SMC)", callback_data="style_smc")],
+        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -108,6 +110,7 @@ def timeframe_keyboard(lang='fa'):
             InlineKeyboardButton(get_text(lang, 'tf_4h'), callback_data="tf_4h"),
             InlineKeyboardButton(get_text(lang, 'tf_1d'), callback_data="tf_1d")
         ],
+        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -128,6 +131,7 @@ def rr_keyboard(lang='fa'):
             InlineKeyboardButton("9", callback_data="rr_9"),
             InlineKeyboardButton("10", callback_data="rr_10")
         ],
+        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -147,7 +151,10 @@ def user_keyboard(lang='fa'):
             InlineKeyboardButton(get_text(lang, 'referral_btn'), callback_data="referral"),
             InlineKeyboardButton(get_text(lang, 'settings_btn'), callback_data="settings")
         ],
-        [InlineKeyboardButton(get_text(lang, 'support_btn'), callback_data="support")]
+        [
+            InlineKeyboardButton(get_text(lang, 'support_btn'), callback_data="support"),
+            InlineKeyboardButton("🌍 " + get_text(lang, 'change_lang'), callback_data="change_lang")
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -337,6 +344,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== تغییر زبان از منوی اصلی =====
+    if data == "change_lang":
+        await query.edit_message_text(
+            "🌍 **زبان خود را انتخاب کنید / Choose your language:**",
+            reply_markup=language_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
     # ===== مرحله ۲: انتخاب سبک =====
     if data.startswith("style_"):
         style = data.replace("style_", "")
@@ -406,6 +422,44 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             df = get_gold_candles(timeframe)
             if df is not None and not df.empty:
                 signal, analysis = create_signal(df, style)
+
+                # ===== اگر سیگنال وجود نداشت، سیگنال اضطراری بساز =====
+                if signal is None:
+                    current_price = df['Close'].iloc[-1]
+                    prev_price = df['Close'].iloc[-2]
+                    price_change = ((current_price - prev_price) / prev_price) * 100
+                    
+                    if price_change > 0:
+                        direction = "BUY"
+                        reason = f"افزایش قیمت لحظه‌ای ({price_change:.2f}%)"
+                    else:
+                        direction = "SELL"
+                        reason = f"کاهش قیمت لحظه‌ای ({price_change:.2f}%)"
+                    
+                    rr_ratio = float(get_setting('rr_ratio') or '2')
+                    RISK = 5.0
+                    REWARD = RISK * rr_ratio
+
+                    if direction == "BUY":
+                        entry = round(current_price, 2)
+                        sl = round(current_price - RISK, 2)
+                        tp = round(current_price + REWARD, 2)
+                    else:
+                        entry = round(current_price, 2)
+                        sl = round(current_price + RISK, 2)
+                        tp = round(current_price - REWARD, 2)
+
+                    signal = {
+                        'direction': direction,
+                        'entry': entry,
+                        'sl': sl,
+                        'tp': tp,
+                    }
+
+                    analysis = {
+                        'reasons': [f"⚠️ سیگنال اضطراری: {reason}"],
+                        'style': style
+                    }
 
                 if signal:
                     trade_id = save_trade(signal, user_id, style)
