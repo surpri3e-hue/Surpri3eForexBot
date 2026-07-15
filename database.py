@@ -3,8 +3,15 @@ from datetime import datetime
 
 DB_NAME = "trades.db"
 
+
 def connect():
     return sqlite3.connect(DB_NAME)
+
+
+def _column_exists(cursor, table, column):
+    cursor.execute(f"PRAGMA table_info({table})")
+    return any(row[1] == column for row in cursor.fetchall())
+
 
 def create_database():
     conn = connect()
@@ -21,7 +28,8 @@ def create_database():
         tp REAL,
         result TEXT DEFAULT 'OPEN',
         user_id INTEGER DEFAULT 0,
-        style TEXT DEFAULT 'ICT'
+        style TEXT DEFAULT 'ICT',
+        strength TEXT DEFAULT 'NORMAL'
     )
     """)
 
@@ -41,7 +49,8 @@ def create_database():
         referred_by INTEGER DEFAULT 0,
         daily_signal_limit INTEGER DEFAULT 5,
         signals_used_today INTEGER DEFAULT 0,
-        last_signal_reset TEXT
+        last_signal_reset TEXT,
+        rr_ratio REAL DEFAULT 2
     )
     """)
 
@@ -55,12 +64,19 @@ def create_database():
     )
     """)
 
+    # ===== migration برای دیتابیس‌های قدیمی‌تر که ستون‌های جدید رو ندارن =====
+    if not _column_exists(cursor, "users", "rr_ratio"):
+        cursor.execute("ALTER TABLE users ADD COLUMN rr_ratio REAL DEFAULT 2")
+
+    if not _column_exists(cursor, "trades", "strength"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN strength TEXT DEFAULT 'NORMAL'")
+
     # ===== تنظیمات پیش‌فرض =====
     default_settings = [
         ('daily_signal_limit', '5'),
         ('referral_bonus', '1'),
         ('referral_threshold', '5'),
-        ('rr_ratio', '2'),
+        ('rr_ratio', '2'),  # این فقط RR پیش‌فرض برای کاربر تازه‌واردـه
         ('default_timeframe', '1h'),
         ('bot_locked', 'false'),
         ('signal_enabled', 'true'),
@@ -76,7 +92,8 @@ def create_database():
     conn.commit()
     conn.close()
 
-# ============ تنظیمات ============
+
+# ============ تنظیمات (Global) ============
 def get_setting(key):
     conn = connect()
     cursor = conn.cursor()
@@ -84,6 +101,7 @@ def get_setting(key):
     result = cursor.fetchone()
     conn.close()
     return result[0] if result else None
+
 
 def update_setting(key, value):
     conn = connect()
@@ -96,6 +114,7 @@ def update_setting(key, value):
     conn.close()
     return True
 
+
 def get_all_settings():
     conn = connect()
     cursor = conn.cursor()
@@ -103,6 +122,7 @@ def get_all_settings():
     results = cursor.fetchall()
     conn.close()
     return {key: value for key, value in results}
+
 
 # ============ کاربران ============
 def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa'):
@@ -116,9 +136,11 @@ def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa')
         conn.close()
         return
 
+    default_rr = float(get_setting('rr_ratio') or '2')
+
     cursor.execute("""
-    INSERT INTO users (id, username, first_name, last_name, joined_at, last_active, lang, daily_signal_limit)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, username, first_name, last_name, joined_at, last_active, lang, daily_signal_limit, rr_ratio)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         username,
@@ -127,11 +149,13 @@ def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa')
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         lang,
-        5
+        5,
+        default_rr
     ))
 
     conn.commit()
     conn.close()
+
 
 def update_activity(user_id):
     conn = connect()
@@ -143,6 +167,7 @@ def update_activity(user_id):
     conn.commit()
     conn.close()
 
+
 def get_users_count():
     conn = connect()
     cursor = conn.cursor()
@@ -150,6 +175,7 @@ def get_users_count():
     count = cursor.fetchone()[0]
     conn.close()
     return count
+
 
 def get_all_users():
     conn = connect()
@@ -159,6 +185,7 @@ def get_all_users():
     conn.close()
     return [{'id': r[0], 'last_active': r[1], 'is_vip': bool(r[2]), 'referral_count': r[3], 'lang': r[4], 'style': r[5]} for r in rows]
 
+
 def get_user_lang(user_id):
     conn = connect()
     cursor = conn.cursor()
@@ -166,6 +193,7 @@ def get_user_lang(user_id):
     result = cursor.fetchone()
     conn.close()
     return result[0] if result else 'fa'
+
 
 def get_user_style(user_id):
     conn = connect()
@@ -175,6 +203,7 @@ def get_user_style(user_id):
     conn.close()
     return result[0] if result else 'ICT'
 
+
 def is_user_vip(user_id):
     conn = connect()
     cursor = conn.cursor()
@@ -183,12 +212,14 @@ def is_user_vip(user_id):
     conn.close()
     return bool(result[0]) if result else False
 
+
 def set_user_vip(user_id, is_vip=True):
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("UPDATE users SET is_vip=? WHERE id=?", (1 if is_vip else 0, user_id))
     conn.commit()
     conn.close()
+
 
 def delete_user(user_id):
     conn = connect()
@@ -197,11 +228,35 @@ def delete_user(user_id):
     conn.commit()
     conn.close()
 
+
+# ============ RR اختصاصی هر کاربر (جدید) ============
+def set_user_rr(user_id, rr_value):
+    """نسبت RR مخصوص همین کاربر رو ذخیره می‌کنه، نه سراسری."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET rr_ratio=? WHERE id=?", (float(rr_value), user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_user_rr(user_id):
+    """RR اختصاصی کاربر رو برمی‌گردونه؛ اگه نبود، مقدار پیش‌فرض سراسری."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rr_ratio FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result and result[0]:
+        return float(result[0])
+    return float(get_setting('rr_ratio') or '2')
+
+
 # ============ رفرال ============
 def get_referral_link(user_id):
     import os
     bot_username = os.getenv("BOT_USERNAME", "Surpri3eFXbot")
     return f"https://t.me/{bot_username}?start=ref_{user_id}"
+
 
 def process_referral(user_id, referrer_id):
     if user_id == referrer_id:
@@ -225,6 +280,7 @@ def process_referral(user_id, referrer_id):
     check_referral_bonus(referrer_id)
     return True
 
+
 def check_referral_bonus(user_id):
     conn = connect()
     cursor = conn.cursor()
@@ -234,7 +290,6 @@ def check_referral_bonus(user_id):
 
     if result:
         referral_count = result[0]
-        current_limit = result[1]
         threshold = int(get_setting('referral_threshold') or '5')
         bonus = int(get_setting('referral_bonus') or '1')
 
@@ -249,6 +304,7 @@ def check_referral_bonus(user_id):
 
     conn.close()
 
+
 # ============ مدیریت سیگنال روزانه ============
 def reset_daily_signals():
     conn = connect()
@@ -256,6 +312,7 @@ def reset_daily_signals():
     cursor.execute("UPDATE users SET signals_used_today = 0, last_signal_reset = CURRENT_TIMESTAMP")
     conn.commit()
     conn.close()
+
 
 def get_user_signals_left(user_id):
     import os
@@ -278,6 +335,7 @@ def get_user_signals_left(user_id):
         return max(0, limit - used)
     return 0
 
+
 def use_signal(user_id):
     import os
     ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
@@ -295,6 +353,7 @@ def use_signal(user_id):
     conn.close()
     return True
 
+
 def get_active_users_today():
     conn = connect()
     cursor = conn.cursor()
@@ -304,14 +363,15 @@ def get_active_users_today():
     conn.close()
     return result[0] if result else 0
 
+
 # ============ معاملات ============
-def save_trade(signal, user_id=0, style='ICT'):
+def save_trade(signal, user_id=0, style='ICT', strength='NORMAL'):
     conn = connect()
     cursor = conn.cursor()
 
     cursor.execute("""
-    INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style, strength)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         signal["direction"],
@@ -320,7 +380,8 @@ def save_trade(signal, user_id=0, style='ICT'):
         signal["tp"],
         "OPEN",
         user_id,
-        style
+        style,
+        strength
     ))
 
     trade_id = cursor.lastrowid
@@ -328,12 +389,14 @@ def save_trade(signal, user_id=0, style='ICT'):
     conn.close()
     return trade_id
 
+
 def update_result(trade_id, result):
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("UPDATE trades SET result=? WHERE id=?", (result, trade_id))
     conn.commit()
     conn.close()
+
 
 def get_user_trades(user_id=0):
     conn = connect()
@@ -358,6 +421,7 @@ def get_user_trades(user_id=0):
         })
     return result
 
+
 def get_statistics():
     conn = connect()
     cursor = conn.cursor()
@@ -377,6 +441,7 @@ def get_statistics():
         'losses': losses,
         'winrate': winrate
     }
+
 
 def get_today_stats():
     conn = connect()
