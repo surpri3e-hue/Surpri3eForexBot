@@ -20,7 +20,7 @@ from telegram.ext import (
     filters
 )
 
-from market import get_gold_candles
+from market import get_gold_candles, get_current_price
 from ict import ict_analysis
 from signals import create_signal
 
@@ -59,6 +59,7 @@ logging.basicConfig(
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
+SUPPORT_ID = "@RealSurprise"  # ایدی پشتیبانی
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
@@ -89,7 +90,10 @@ def user_keyboard():
             InlineKeyboardButton("📜 تاریخچه", callback_data="history")
         ],
         [InlineKeyboardButton("💎 VIP", callback_data="vip")],
-        [InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings")]
+        [
+            InlineKeyboardButton("⚙️ تنظیمات", callback_data="settings"),
+            InlineKeyboardButton("🆘 پشتیبانی", callback_data="support")
+        ]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -122,79 +126,121 @@ def signal_result_keyboard(trade_id):
 
 # ============ تابع تولید چارت ============
 def generate_chart(df, signal, timeframe):
-    """تولید چارت ساده با خطوط سیگنال"""
+    """تولید چارت حرفه‌ای مثل تریدینگ ویو"""
     try:
-        df_copy = df.tail(30).copy()
+        df_copy = df.tail(40).copy()
         
-        fig, ax = plt.subplots(figsize=(12, 7))
+        fig, (ax1, ax2) = plt.subplots(
+            2, 1,
+            figsize=(14, 10),
+            gridspec_kw={'height_ratios': [3, 1]},
+            sharex=True
+        )
         
-        # رسم قیمت
-        ax.plot(df_copy.index, df_copy['Close'], color='black', linewidth=1.5, label='Price')
-        ax.fill_between(df_copy.index, df_copy['Close'].min() - 5, df_copy['Close'], 
-                        alpha=0.2, color='blue')
+        # ===== کندل‌ها =====
+        width = 0.6
+        up = df_copy[df_copy['Close'] >= df_copy['Open']]
+        down = df_copy[df_copy['Close'] < df_copy['Open']]
         
-        # خطوط سیگنال
+        # کندل‌های صعودی (سبز)
+        ax1.bar(up.index, up['Close'] - up['Open'], width, bottom=up['Open'], color='#26a69a')
+        ax1.bar(up.index, up['High'] - up['Close'], width/10, bottom=up['Close'], color='#26a69a')
+        ax1.bar(up.index, up['Low'] - up['Open'], width/10, bottom=up['Open'], color='#26a69a')
+        
+        # کندل‌های نزولی (قرمز)
+        ax1.bar(down.index, down['Close'] - down['Open'], width, bottom=down['Open'], color='#ef5350')
+        ax1.bar(down.index, down['High'] - down['Open'], width/10, bottom=down['Open'], color='#ef5350')
+        ax1.bar(down.index, down['Low'] - down['Close'], width/10, bottom=down['Close'], color='#ef5350')
+        
+        # ===== خطوط سیگنال با RR ثابت 1:2 =====
         entry = signal['entry']
-        sl = signal['sl']
-        tp = signal['tp']
         
-        ax.axhline(y=entry, color='blue', linestyle='--', linewidth=2, 
-                   label=f'Entry: {entry:.2f}')
-        ax.axhline(y=sl, color='red', linestyle='--', linewidth=2, 
-                   label=f'SL: {sl:.2f}')
-        ax.axhline(y=tp, color='green', linestyle='--', linewidth=2, 
-                   label=f'TP: {tp:.2f}')
+        # محاسبه SL و TP با نسبت 1:2
+        if signal['direction'] == 'BUY':
+            sl = round(entry - 5, 2)      # 5 دلار ریسک
+            tp = round(entry + 10, 2)     # 10 دلار ریوارد (1:2)
+        else:  # SELL
+            sl = round(entry + 5, 2)      # 5 دلار ریسک
+            tp = round(entry - 10, 2)     # 10 دلار ریوارد (1:2)
         
-        # نواحی ریسک و ریوارد
-        ax.axhspan(min(entry, sl), max(entry, sl), alpha=0.15, color='red', label='Risk')
-        ax.axhspan(min(entry, tp), max(entry, tp), alpha=0.15, color='green', label='Reward')
+        # بروزرسانی سیگنال
+        signal['sl'] = sl
+        signal['tp'] = tp
         
-        # تنظیمات
-        ax.set_title(f'XAUUSD - {timeframe}', fontsize=14, fontweight='bold')
-        ax.set_ylabel('Price (USD)', fontsize=12)
-        ax.legend(loc='upper left', fontsize=10)
-        ax.grid(True, alpha=0.3)
+        # خط Entry (آبی)
+        ax1.axhline(y=entry, color='#2962ff', linestyle='--', linewidth=2.5, label=f'Entry: {entry:.2f}')
         
-        # محاسبه RR
-        risk = abs(entry - sl)
-        reward = abs(tp - entry)
-        rr = round(reward / risk, 2) if risk > 0 else 0
+        # خط SL (قرمز)
+        ax1.axhline(y=sl, color='#ff1744', linestyle='--', linewidth=2.5, label=f'SL: {sl:.2f}')
         
+        # خط TP (سبز)
+        ax1.axhline(y=tp, color='#00e676', linestyle='--', linewidth=2.5, label=f'TP: {tp:.2f}')
+        
+        # ===== نواحی ریسک و ریوارد =====
+        ax1.axhspan(min(entry, sl), max(entry, sl), alpha=0.15, color='red', label='Risk Zone')
+        ax1.axhspan(min(entry, tp), max(entry, tp), alpha=0.15, color='green', label='Reward Zone')
+        
+        # ===== تنظیمات =====
+        ax1.set_title(f'XAUUSD - {timeframe}', fontsize=14, fontweight='bold')
+        ax1.set_ylabel('Price (USD)', fontsize=12)
+        ax1.legend(loc='upper left', fontsize=10)
+        ax1.grid(True, alpha=0.3)
+        
+        # ===== حجم =====
+        colors = ['#26a69a' if df_copy['Close'].iloc[i] >= df_copy['Open'].iloc[i] else '#ef5350' 
+                  for i in range(len(df_copy))]
+        ax2.bar(df_copy.index, df_copy['Volume'], color=colors, alpha=0.7)
+        ax2.set_ylabel('Volume', fontsize=12)
+        ax2.grid(True, alpha=0.3)
+        
+        # ===== نمایش اطلاعات روی چارت =====
         direction = 'BUY' if signal['direction'] == 'BUY' else 'SELL'
         color = 'green' if direction == 'BUY' else 'red'
         
-        info = f'Signal: {direction} | RR: 1:{rr} | Score: {signal.get("score", 0)}'
-        ax.text(0.02, 0.98, info, transform=ax.transAxes,
-                fontsize=11, fontweight='bold', color='white',
+        info_text = f'Signal: {direction}  |  RR: 1:2  |  Score: {signal.get("score", 0)}'
+        ax1.text(0.02, 0.98, info_text, transform=ax1.transAxes,
+                fontsize=12, fontweight='bold', color='white',
                 bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
+        
+        # نمایش قیمت فعلی
+        current_price = df_copy['Close'].iloc[-1]
+        ax1.text(0.98, 0.02, f'Current: {current_price:.2f}', transform=ax1.transAxes,
+                fontsize=11, fontweight='bold', color='white',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.7),
+                horizontalalignment='right')
         
         plt.tight_layout()
         
+        # ذخیره
         buf = io.BytesIO()
         plt.savefig(buf, format='png', dpi=120, bbox_inches='tight', facecolor='white')
         buf.seek(0)
         plt.close()
         
-        return buf, rr
+        return buf
         
     except Exception as e:
         logging.error(f"Chart error: {e}")
-        return None, 0
+        return None
 
 # ============ ارسال سیگنال با چارت ============
 async def send_signal_with_chart(target, trade_id, signal, df, timeframe):
-    chart_buf, rr = generate_chart(df, signal, timeframe)
+    chart_buf = generate_chart(df, signal, timeframe)
+    
+    # دریافت قیمت لحظه‌ای
+    current_price = get_current_price()
     
     message = (
         f"🚨 **سیگنال جدید**\n\n"
         f"⏱️ **تایم‌فریم:** {timeframe}\n"
-        f"💰 **قیمت فعلی:** {df['Close'].iloc[-1]:.2f}\n\n"
+        f"💰 **قیمت لحظه‌ای:** {current_price if current_price else df['Close'].iloc[-1]:.2f}\n\n"
         f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
         f"📍 **ورود:** {signal['entry']:.2f}\n"
         f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
         f"🎯 **حد سود (TP):** {signal['tp']:.2f}\n"
         f"⭐ **امتیاز:** {signal.get('score', 0)}\n"
-        f"📊 **ریسک به ریوارد:** 1:{rr}\n\n"
+        f"📊 **ریسک به ریوارد:** 1:2 (ثابت)\n"
+        f"📡 **منبع:** {signal.get('source', 'ICT')}\n\n"
         f"👇 نتیجه معامله را انتخاب کنید:"
     )
     
@@ -223,7 +269,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "به ربات سیگنال‌دهی طلا خوش آمدید!\n\n"
         "🔹 برای دریافت سیگنال روی دکمه 🚨 کلیک کنید\n"
         "🔹 تایم‌فریم مورد نظر را انتخاب کنید\n"
-        "🔹 آمار عملکرد خود را در 📊 ببینید\n\n"
+        "🔹 آمار عملکرد خود را در 📊 ببینید\n"
+        "🔹 برای ارتباط با پشتیبانی روی 🆘 کلیک کنید\n\n"
         "موفق باشید! 🍀",
         reply_markup=user_keyboard(),
         parse_mode='Markdown'
@@ -247,7 +294,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
 
-    # نتیجه سیگنال
+    # ===== نتیجه سیگنال =====
     if data.startswith("tp_"):
         trade_id = data.split("_")[1]
         update_result(trade_id, "TP")
@@ -276,7 +323,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # برگشت
+    # ===== برگشت =====
     if data == "back":
         await query.edit_message_text(
             "🤖 **Surpri3e AI Scanner**\n\nبه پنل خوش آمدید",
@@ -285,7 +332,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # منوی تایم‌فریم
+    # ===== پشتیبانی =====
+    if data == "support":
+        await query.edit_message_text(
+            f"🆘 **پشتیبانی**\n\n"
+            f"برای ارتباط با پشتیبانی روی لینک زیر کلیک کنید:\n\n"
+            f"👤 **ایدی پشتیبانی:** {SUPPORT_ID}\n\n"
+            f"📱 **لینک مستقیم:**\n"
+            f"[تماس با پشتیبانی](https://t.me/RealSurprise)\n\n"
+            f"⏰ **ساعت پاسخگویی:** ۲۴ ساعته",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown',
+            disable_web_page_preview=True
+        )
+        return
+
+    # ===== منوی تایم‌فریم =====
     if data == "signal_menu":
         await query.edit_message_text(
             "⏱️ **انتخاب تایم‌فریم:**\n\nلطفاً تایم‌فریم مورد نظر را انتخاب کنید:",
@@ -294,7 +356,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # انتخاب تایم‌فریم
+    # ===== انتخاب تایم‌فریم =====
     if data.startswith("tf_"):
         timeframe_map = {
             "tf_1min": "1min",
@@ -309,22 +371,50 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_timeframe = data.replace("tf_", "")
         
         await query.edit_message_text(
-            f"🔍 **در حال تحلیل طلا ({display_timeframe})...**",
+            f"🔍 **در حال دریافت قیمت لحظه‌ای و سیگنال...**",
             parse_mode='Markdown'
         )
         
         try:
-            df = get_gold_candles(timeframe)
-            if df is None or df.empty:
-                await query.message.reply_text("❌ **خطا در دریافت داده**", parse_mode='Markdown')
-                return
+            # ===== دریافت قیمت لحظه‌ای =====
+            current_price = get_current_price()
             
-            analysis = ict_analysis(df)
+            # ===== دریافت دیتا برای چارت =====
+            df = get_gold_candles(timeframe)
+            
+            # ===== تحلیل ICT =====
+            analysis = ict_analysis(df) if df is not None else None
             signal = create_signal(df, analysis)
             
             if signal:
+                # اگه قیمت لحظه‌ای داریم، جایگزین کن
+                if current_price:
+                    signal['entry'] = round(current_price, 2)
+                
                 trade_id = save_trade(signal)
-                await send_signal_with_chart(query.message, trade_id, signal, df, display_timeframe)
+                
+                # ارسال سیگنال با چارت
+                if df is not None and not df.empty:
+                    await send_signal_with_chart(query.message, trade_id, signal, df, display_timeframe)
+                else:
+                    # فقط متن
+                    message = (
+                        f"🚨 **سیگنال جدید**\n\n"
+                        f"💰 **قیمت لحظه‌ای:** {current_price if current_price else 'N/A'}\n"
+                        f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
+                        f"📍 **ورود:** {signal['entry']:.2f}\n"
+                        f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
+                        f"🎯 **حد سود (TP):** {signal['tp']:.2f}\n"
+                        f"⭐ **امتیاز:** {signal.get('score', 0)}\n"
+                        f"📊 **ریسک به ریوارد:** 1:2 (ثابت)\n"
+                        f"📡 **منبع:** {signal.get('source', 'ICT')}\n\n"
+                        f"👇 نتیجه معامله را انتخاب کنید:"
+                    )
+                    await query.message.reply_text(
+                        message,
+                        reply_markup=signal_result_keyboard(trade_id),
+                        parse_mode='Markdown'
+                    )
             else:
                 await query.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
                 
@@ -333,7 +423,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
         return
 
-    # عملکرد
+    # ===== عملکرد =====
     if data == "performance":
         stats = get_statistics()
         await query.edit_message_text(
@@ -348,7 +438,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # تاریخچه
+    # ===== تاریخچه =====
     if data == "history":
         trades = get_user_trades()
         if trades:
@@ -366,20 +456,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
         return
 
-    # VIP
+    # ===== VIP =====
     if data == "vip":
         await query.edit_message_text(
             "💎 **پنل VIP**\n\n"
             "✅ **سیگنال‌های ویژه**\n"
             "✅ **آنالیز پیشرفته**\n"
             "✅ **پشتیبانی اختصاصی**\n\n"
-            "برای عضویت با ادمین تماس بگیرید:\n👤 @AmirHossein_Nik",
+            "برای عضویت با ادمین تماس بگیرید:\n👤 @RealSurprise",
             reply_markup=user_keyboard(),
             parse_mode='Markdown'
         )
         return
 
-    # تنظیمات
+    # ===== تنظیمات =====
     if data == "settings":
         settings = get_settings()
         await query.edit_message_text(
@@ -387,7 +477,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🔹 **تایم‌فریم پیش‌فرض:** {settings.get('default_timeframe', '5min')}\n"
             f"🔹 **هشدار:** {'فعال' if settings.get('alert', True) else 'غیرفعال'}\n"
             f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n"
-            f"🔹 **ارسال چارت:** {'فعال' if settings.get('send_chart', True) else 'غیرفعال'}\n\n"
+            f"🔹 **ارسال چارت:** {'فعال' if settings.get('send_chart', True) else 'غیرفعال'}\n"
+            f"🔹 **نسبت RR:** 1:2 (ثابت)\n\n"
             "تنظیمات بیشتر به زودی اضافه میشه!",
             reply_markup=user_keyboard(),
             parse_mode='Markdown'
