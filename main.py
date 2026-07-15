@@ -44,7 +44,9 @@ from database import (
     get_referral_link,
     process_referral,
     get_today_stats,
-    connect
+    connect,
+    set_user_rr,
+    get_user_rr
 )
 
 from settings import init_settings, get_settings
@@ -66,6 +68,7 @@ logging.basicConfig(
     format='%(asctime)s - %(name)s - %(levelname)s - %(message)s',
     level=logging.INFO
 )
+logger = logging.getLogger(__name__)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
@@ -76,6 +79,7 @@ if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
+
 
 # ============ کیبورد انتخاب زبان ============
 def language_keyboard():
@@ -88,6 +92,7 @@ def language_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 # ============ کیبورد انتخاب سبک ============
 def style_keyboard(lang='fa'):
     keyboard = [
@@ -96,6 +101,7 @@ def style_keyboard(lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 # ============ کیبورد انتخاب تایم‌فریم ============
 def timeframe_keyboard(lang='fa'):
@@ -113,6 +119,7 @@ def timeframe_keyboard(lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 # ============ کیبورد انتخاب RR (۱ تا ۱۰) ============
 def rr_keyboard(lang='fa'):
@@ -134,6 +141,7 @@ def rr_keyboard(lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 # ============ کیبورد اصلی کاربر ============
 def user_keyboard(lang='fa'):
@@ -158,6 +166,7 @@ def user_keyboard(lang='fa'):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 # ============ کیبورد نتیجه سیگنال ============
 def signal_result_keyboard(trade_id, lang='fa'):
     keyboard = [
@@ -169,6 +178,7 @@ def signal_result_keyboard(trade_id, lang='fa'):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 # ============ کیبورد ادمین ============
 def admin_keyboard():
     keyboard = [
@@ -179,7 +189,7 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton("📊 Set Daily Signal", callback_data="set_daily_signal"),
-            InlineKeyboardButton("🎯 Set RR Ratio", callback_data="set_rr")
+            InlineKeyboardButton("🎯 Set Default RR", callback_data="set_rr")
         ],
         [
             InlineKeyboardButton("⏱️ Set Timeframe", callback_data="set_timeframe"),
@@ -206,6 +216,7 @@ def admin_keyboard():
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 # ============ کیبورد رفرال ============
 def referral_keyboard(user_id, lang='fa'):
     link = get_referral_link(user_id)
@@ -215,6 +226,7 @@ def referral_keyboard(user_id, lang='fa'):
     ]
     return InlineKeyboardMarkup(keyboard)
 
+
 # ============ چک کردن عضویت در کانال ============
 async def check_channel_membership(user_id, context):
     if not CHANNEL_ID:
@@ -222,18 +234,21 @@ async def check_channel_membership(user_id, context):
     try:
         member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
         return member.status in ['member', 'administrator', 'creator']
-    except:
+    except Exception as e:
+        logger.warning(f"خطا در بررسی عضویت کانال برای کاربر {user_id}: {e}")
         return False
 
+
 # ============ ارسال سیگنال ============
-async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='fa'):
+async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id, lang='fa'):
     current_price = get_current_price()
     tehran_time = get_tehran_time()
 
     if not current_price:
         current_price = df['Close'].iloc[-1]
 
-    rr_ratio = float(get_setting('rr_ratio') or '2')
+    # ===== RR اختصاصی همین کاربر، نه سراسری =====
+    rr_ratio = get_user_rr(user_id)
     RISK = 5.0
     REWARD = RISK * rr_ratio
 
@@ -252,9 +267,12 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='f
 
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
     style = analysis.get('style', 'ICT')
+    strength = signal.get('strength', 'NORMAL')
+
+    title_prefix = "⚠️ " if strength == "WEAK" else "🚨 "
 
     message = f"""
-🚨 **{get_text(lang, 'signal_title')}**
+{title_prefix}**{get_text(lang, 'signal_title')}**
 
 **📊 {get_text(lang, 'style_label')}:** {style}
 **📈 {get_text(lang, 'direction_label')}:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
@@ -279,13 +297,17 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, lang='f
         parse_mode='Markdown'
     )
 
+
 # ============ دستور /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
 
     if context.args and context.args[0].startswith('ref_'):
-        referrer_id = int(context.args[0].replace('ref_', ''))
-        process_referral(user_id, referrer_id)
+        try:
+            referrer_id = int(context.args[0].replace('ref_', ''))
+            process_referral(user_id, referrer_id)
+        except ValueError:
+            pass
 
     if get_setting('bot_locked') == 'true':
         await update.message.reply_text("🔒 ربات در حال حاضر قفل است.")
@@ -305,6 +327,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+
 # ============ دستور /admin ============
 async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -316,6 +339,7 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=admin_keyboard(),
         parse_mode='Markdown'
     )
+
 
 # ============ مدیریت دکمه‌ها ============
 async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -348,7 +372,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== انتخاب سبک =====
     if data.startswith("style_"):
-        style = data.replace("style_", "")
+        style = data.replace("style_", "").upper()
         context.user_data['style'] = style
 
         conn = connect()
@@ -357,7 +381,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.commit()
         conn.close()
 
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'select_timeframe'),
             reply_markup=timeframe_keyboard(lang),
@@ -370,7 +394,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         timeframe = data.replace("tf_", "")
         context.user_data['timeframe'] = timeframe
 
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'select_rr'),
             reply_markup=rr_keyboard(lang),
@@ -378,20 +402,16 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب RR =====
+    # ===== انتخاب RR (اختصاصی همین کاربر) =====
     if data.startswith("rr_"):
         rr = int(data.replace("rr_", ""))
-        
-        if rr < 1:
-            rr = 1
-        if rr > 10:
-            rr = 10
-        
-        update_setting('rr_ratio', str(rr))
+        rr = max(1, min(10, rr))
+
+        set_user_rr(user_id, rr)  # ✅ per-user، نه سراسری
         context.user_data['rr'] = rr
 
-        lang = context.user_data.get('lang', 'fa')
-        style = context.user_data.get('style', 'ICT')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        style = context.user_data.get('style') or get_user_style(user_id)
         timeframe = context.user_data.get('timeframe', '5min')
 
         signals_left = get_user_signals_left(user_id)
@@ -414,9 +434,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 signal, analysis = create_signal(df, style)
 
                 if signal:
-                    trade_id = save_trade(signal, user_id, style)
+                    strength = signal.get('strength', 'NORMAL')
+                    trade_id = save_trade(signal, user_id, style, strength)
                     use_signal(user_id)
-                    await send_signal(query.message, trade_id, signal, analysis, df, timeframe, lang)
+                    await send_signal(query.message, trade_id, signal, analysis, df, timeframe, user_id, lang)
                 else:
                     await query.message.reply_text(
                         get_text(lang, 'no_signal'),
@@ -431,6 +452,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
 
         except Exception as e:
+            logger.exception(f"خطا در تولید سیگنال برای کاربر {user_id}")
             await query.message.reply_text(
                 f"❌ {get_text(lang, 'error')}: {str(e)}",
                 reply_markup=user_keyboard(lang),
@@ -452,9 +474,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== نتیجه سیگنال =====
     if data.startswith("tp_"):
-        trade_id = data.split("_")[1]
+        trade_id = data.split("_", 1)[1]
         update_result(trade_id, "TP")
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'tp_registered'),
             reply_markup=user_keyboard(lang),
@@ -463,9 +485,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("sl_"):
-        trade_id = data.split("_")[1]
+        trade_id = data.split("_", 1)[1]
         update_result(trade_id, "SL")
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'sl_registered'),
             reply_markup=user_keyboard(lang),
@@ -474,7 +496,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if data.startswith("cancel_"):
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'canceled'),
             reply_markup=user_keyboard(lang),
@@ -485,7 +507,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== برگشت =====
     if data == "back":
         context.user_data['admin_action'] = None
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'welcome_back'),
             reply_markup=user_keyboard(lang),
@@ -495,7 +517,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== رفرال =====
     if data == "referral":
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         link = get_referral_link(user_id)
         await query.edit_message_text(
             get_text(lang, 'referral_text').format(link=link),
@@ -506,7 +528,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== قیمت لحظه‌ای =====
     if data == "live_price":
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(get_text(lang, 'fetching_price'), parse_mode='Markdown')
 
         try:
@@ -526,6 +548,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     parse_mode='Markdown'
                 )
         except Exception as e:
+            logger.exception(f"خطا در دریافت قیمت لحظه‌ای برای کاربر {user_id}")
             await query.edit_message_text(
                 f"❌ **{get_text(lang, 'error')}:** {str(e)}",
                 reply_markup=user_keyboard(lang),
@@ -535,7 +558,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== پشتیبانی =====
     if data == "support":
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'support_text').format(support=SUPPORT_ID),
             reply_markup=user_keyboard(lang),
@@ -546,7 +569,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== منوی اصلی سیگنال =====
     if data == "signal_menu":
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'select_style'),
             reply_markup=style_keyboard(lang),
@@ -558,7 +581,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "performance":
         stats = get_statistics()
         signals_left = get_user_signals_left(user_id)
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'performance_text').format(
                 total=stats['total'],
@@ -575,7 +598,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== تاریخچه =====
     if data == "history":
         trades = get_user_trades(user_id)
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         if trades:
             text = get_text(lang, 'history_title') + "\n\n"
             for i, t in enumerate(trades[:10], 1):
@@ -588,7 +611,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== VIP =====
     if data == "vip":
-        lang = context.user_data.get('lang', 'fa')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'vip_text'),
             reply_markup=user_keyboard(lang),
@@ -599,9 +622,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== تنظیمات =====
     if data == "settings":
         settings = get_settings()
-        lang = context.user_data.get('lang', 'fa')
-        rr = get_setting('rr_ratio') or '2'
-        style = context.user_data.get('style', 'ICT')
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        rr = get_user_rr(user_id)
+        style = context.user_data.get('style') or get_user_style(user_id)
         await query.edit_message_text(
             get_text(lang, 'settings_text').format(
                 timeframe=settings.get('default_timeframe', '5min'),
@@ -671,7 +694,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
-            "🎯 **نسبت RR**\n\nعدد را وارد کنید (مثلاً 2 برای 1:2):",
+            "🎯 **نسبت RR پیش‌فرض (برای کاربران جدید)**\n\nعدد را وارد کنید (مثلاً 2 برای 1:2):",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
@@ -767,7 +790,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         await query.edit_message_text(
-            "📢 **ارسال همگانی**\n\nپیام خود را تایپ کنید:",
+            "📢 **ارسال همگانی**\n\nپیام خود را تایپ کنید (یا /cancel برای لغو):",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
@@ -779,6 +802,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(report(), reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
+
 
 # ============ مدیریت پیام‌ها ============
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -795,16 +819,18 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             users = get_all_users()
             success = 0
+            failed = 0
             for u in users:
                 try:
                     await context.bot.send_message(chat_id=u['id'], text=f"{text}")
                     success += 1
-                except:
-                    pass
+                except Exception as e:
+                    failed += 1
+                    logger.warning(f"ارسال پیام همگانی به کاربر {u['id']} ناموفق بود: {e}")
 
             context.user_data['broadcast_mode'] = False
             await update.message.reply_text(
-                f"✅ **ارسال شد!**\n\n✅ موفق: {success}\n❌ ناموفق: {len(users) - success}",
+                f"✅ **ارسال شد!**\n\n✅ موفق: {success}\n❌ ناموفق: {failed}",
                 reply_markup=admin_keyboard(),
                 parse_mode='Markdown'
             )
@@ -827,7 +853,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 value = float(text.replace(',', '.'))
                 result = set_rr_ratio(value)
                 await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
-            except:
+            except ValueError:
                 await update.message.reply_text("❌ **لطفاً یک عدد معتبر وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
@@ -877,24 +903,30 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['admin_action'] = None
             return
 
-    lang = context.user_data.get('lang', 'fa')
+    lang = context.user_data.get('lang') or get_user_lang(user_id)
     await update.message.reply_text(
         get_text(lang, 'use_buttons'),
         reply_markup=user_keyboard(lang),
         parse_mode='Markdown'
     )
 
+
 # ============ ریست شبانه ============
 def reset_daily():
     while True:
-        now = datetime.now(TEHRAN_TZ)
-        target = now.replace(hour=3, minute=30, second=0, microsecond=0)
-        if now >= target:
-            target += timedelta(days=1)
-        wait_seconds = (target - now).total_seconds()
-        time.sleep(wait_seconds)
-        reset_daily_signals()
-        logging.info("🔄 سیگنال‌های روزانه ریست شد.")
+        try:
+            now = datetime.now(TEHRAN_TZ)
+            target = now.replace(hour=3, minute=30, second=0, microsecond=0)
+            if now >= target:
+                target += timedelta(days=1)
+            wait_seconds = (target - now).total_seconds()
+            time.sleep(wait_seconds)
+            reset_daily_signals()
+            logging.info("🔄 سیگنال‌های روزانه ریست شد.")
+        except Exception as e:
+            logger.exception(f"خطا در thread ریست روزانه: {e}")
+            time.sleep(60)  # قبل از تلاش دوباره کمی صبر کن تا loop بی‌نهایت سریع نشه
+
 
 # ============ اجرا ============
 def main():
@@ -914,14 +946,13 @@ def main():
         logging.info("🤖 Surpri3e AI Bot Started")
         print("✅ Surpri3e AI Bot Started")
 
-        port = int(os.environ.get("PORT", 8080))
-        print(f"🔄 Running on port {port}")
         app.run_polling()
 
     except Exception as e:
         logging.error(f"❌ Main Error: {e}")
         print(f"❌ Error: {e}")
         raise
+
 
 if __name__ == "__main__":
     main()
