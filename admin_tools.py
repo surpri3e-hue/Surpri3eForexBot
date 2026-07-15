@@ -10,6 +10,7 @@ import logging
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
+
 # ============ کنترل‌های اصلی ============
 def toggle_bot_lock():
     current = get_setting('bot_locked') == 'true'
@@ -17,17 +18,20 @@ def toggle_bot_lock():
     update_setting('bot_locked', 'true' if new_status else 'false')
     return '🔒 قفل شده' if new_status else '🔓 باز'
 
+
 def toggle_signal():
     current = get_setting('signal_enabled') == 'true'
     new_status = not current
     update_setting('signal_enabled', 'true' if new_status else 'false')
     return '🚀 فعال' if new_status else '⛔ غیرفعال'
 
+
 def toggle_channel_lock():
     current = get_setting('channel_locked') == 'true'
     new_status = not current
     update_setting('channel_locked', 'true' if new_status else 'false')
     return '🔒 فعال' if new_status else '🔓 غیرفعال'
+
 
 # ============ تنظیمات سیگنال ============
 def set_daily_signal_limit(value):
@@ -39,7 +43,6 @@ def set_daily_signal_limit(value):
 
         update_setting('daily_signal_limit', str(value))
 
-        # اعمال روی همه کاربران
         conn = connect()
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET daily_signal_limit=?", (value,))
@@ -47,24 +50,32 @@ def set_daily_signal_limit(value):
         conn.close()
 
         return f"✅ تعداد سیگنال روزانه به {value} تغییر کرد و روی همه کاربران اعمال شد."
-    except:
+    except Exception:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
+
 def set_rr_ratio(value):
+    """
+    ⚠️ این فقط RR پیش‌فرض برای کاربرهای تازه‌وارد رو تغییر می‌ده.
+    هر کاربر موجود می‌تونه RR اختصاصی خودش رو با انتخاب دکمه در ربات ست کنه
+    (ذخیره می‌شه در ستون rr_ratio جدول users - نه اینجا).
+    """
     try:
         value = float(value)
         if value <= 0:
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('rr_ratio', str(value))
-        return f"✅ نسبت RR به 1:{value} تغییر کرد."
-    except:
+        return f"✅ نسبت RR پیش‌فرض (برای کاربران جدید) به 1:{value} تغییر کرد."
+    except Exception:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
+
 
 def set_default_timeframe(value):
     if value not in ['1min', '5min', '15min', '1h', '4h', '1d']:
         return "❌ تایم‌فریم نامعتبر"
     update_setting('default_timeframe', value)
     return f"✅ تایم‌فریم پیش‌فرض: {value}"
+
 
 # ============ سیستم رفرال ============
 def set_referral_bonus(value):
@@ -74,8 +85,9 @@ def set_referral_bonus(value):
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('referral_bonus', str(value))
         return f"✅ پاداش هر رفرال: {value} سیگنال اضافی"
-    except:
+    except Exception:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
+
 
 def set_referral_threshold(value):
     try:
@@ -84,8 +96,9 @@ def set_referral_threshold(value):
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('referral_threshold', str(value))
         return f"✅ آستانه رفرال: {value}"
-    except:
+    except Exception:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
+
 
 # ============ داشبورد ============
 def dashboard():
@@ -100,7 +113,7 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
-🎯 **نسبت RR:** 1:{settings.get('rr_ratio', '2')}
+🎯 **نسبت RR پیش‌فرض:** 1:{settings.get('rr_ratio', '2')} (هر کاربر می‌تواند مقدار خودش را داشته باشد)
 ⏱️ **تایم‌فریم:** {settings.get('default_timeframe', '1h')}
 
 🔒 **وضعیت ربات:** {'🔒 قفل' if settings.get('bot_locked') == 'true' else '🔓 باز'}
@@ -118,6 +131,7 @@ def dashboard():
 
 📡 **آخرین بروزرسانی:** {datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d %H:%M')}
 """
+
 
 def report():
     stats = get_statistics()
@@ -141,20 +155,21 @@ def report():
 📡 **تاریخ:** {datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d %H:%M')}
 """
 
+
 # ============ ریست شبانه ============
 def reset_daily():
     reset_daily_signals()
     logging.info("🔄 سیگنال‌های روزانه ریست شد.")
     return "✅ سیگنال‌های روزانه ریست شد"
 
+
 def get_user_detail(user_id):
     """گرفتن جزئیات یک کاربر"""
-    from database import connect
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("""
         SELECT id, username, first_name, last_name, joined_at, last_active,
-               is_vip, referral_count, daily_signal_limit, signals_used_today, lang, style
+               is_vip, referral_count, daily_signal_limit, signals_used_today, lang, style, rr_ratio
         FROM users WHERE id=?
     """, (user_id,))
     result = cursor.fetchone()
@@ -173,6 +188,7 @@ def get_user_detail(user_id):
             'daily_signal_limit': result[8],
             'signals_used_today': result[9],
             'lang': result[10] if len(result) > 10 else 'fa',
-            'style': result[11] if len(result) > 11 else 'ICT'
+            'style': result[11] if len(result) > 11 else 'ICT',
+            'rr_ratio': result[12] if len(result) > 12 else 2.0
         }
     return None
