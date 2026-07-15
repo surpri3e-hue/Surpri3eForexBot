@@ -98,9 +98,6 @@ def generate_test_data(timeframe="5min", count=50):
         return None
 
 def get_current_price():
-    """
-    دریافت قیمت لحظه‌ای از GoldAPI (دقیق‌ترین)
-    """
     # ===== منبع 1: GoldAPI =====
     try:
         url = "https://api.gold-api.com/price/XAU"
@@ -131,17 +128,5 @@ def get_current_price():
                 return round(price, 2)
         except Exception as e:
             print(f"❌ Twelve Data error: {e}")
-    
-    # ===== منبع 3: MetalPriceAPI =====
-    try:
-        url = "https://api.metalpriceapi.com/v1/latest?api_key=demo&base=USD&currencies=XAU"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        if "rates" in data and "XAU" in data["rates"]:
-            price = float(data["rates"]["XAU"])
-            print(f"✅ MetalPriceAPI: {price}")
-            return round(price, 2)
-    except Exception as e:
-        print(f"❌ MetalPriceAPI error: {e}")
     
     return None
