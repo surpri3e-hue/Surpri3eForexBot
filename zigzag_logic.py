@@ -125,3 +125,80 @@ def get_zigzag_signal(df, depth=DEPTH_ENGINE, deviation=DEVIATION_ENGINE):
         'pivot_price': round(float(last_price), 2),
         'bars_ago': len(df) - 1 - last_idx,
     }
+
+
+# ============================================================
+# Surpri3e Strategy — سبک مستقل، فقط بر اساس همین اندیکاتور ZigZag
+# (بدون ترکیب با ICT/SMC یا اندیکاتورهای تکمیلی)
+# ============================================================
+
+# حداکثر تعداد کندل مجاز از زمان شکل‌گیری pivot تا الان؛
+# اگه نقطه‌ی چرخش خیلی قدیمی باشه (بازار از اون موقع مسیر زیادی رفته)
+# دیگه به‌عنوان سیگنال معتبر در نظر گرفته نمی‌شه.
+MAX_PIVOT_AGE_BARS = 10
+
+
+def analyze_surpri3e_strategy(df):
+    """
+    سبک «Surpri3e Strategy» - مستقیماً از نقطه‌ی چرخش ZigZag سیگنال می‌سازه،
+    بدون ترکیب با ICT/SMC یا اندیکاتورهای تکمیلی (RSI/MACD/...).
+
+    خروجی مشابه ict_logic.analyze_ict / smc_logic.analyze_smc:
+        (signal: dict, analysis: dict)  یا  (None, None)
+
+    ⚠️ چون این استراتژی فقط به یک منبع (ZigZag) متکیه، طبیعتاً کمتر از
+    ترکیب ICT/SMC سیگنال تولید می‌کنه - این عمدی و صادقانه‌ست، نه باگ.
+    """
+    if df is None or len(df) < 30:
+        return None, None
+
+    is_real = df.attrs.get('is_real_data', True)
+
+    zz = get_zigzag_signal(df)
+    if not zz:
+        return None, None
+
+    # اگه نقطه‌ی چرخش خیلی قدیمی باشه، دیگه قابل اتکا نیست
+    if zz['bars_ago'] > MAX_PIVOT_AGE_BARS:
+        return None, None
+
+    direction = zz['direction']
+    current = float(df['Close'].iloc[-1])
+
+    from database import get_setting
+    rr_ratio = float(get_setting('rr_ratio') or '2')
+    RISK = 5.0
+    REWARD = RISK * rr_ratio
+
+    if direction == "BUY":
+        entry = round(current, 2)
+        sl = round(current - RISK, 2)
+        tp = round(current + REWARD, 2)
+    else:
+        entry = round(current, 2)
+        sl = round(current + RISK, 2)
+        tp = round(current - REWARD, 2)
+
+    reasons = [
+        f"نقطه‌ی چرخش ZigZag در سطح {zz['pivot_price']:.2f} ({zz['bars_ago']} کندل قبل)"
+    ]
+
+    if not is_real:
+        reasons = ["⚠️ هشدار: این تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده، نه قیمت واقعی بازار"] + reasons
+
+    signal = {
+        'direction': direction,
+        'entry': entry,
+        'sl': sl,
+        'tp': tp,
+        'strength': 'NORMAL',
+    }
+
+    analysis = {
+        'reasons': reasons,
+        'style': 'Surpri3e Strategy',
+        'score': None,
+        'strength': 'NORMAL',
+    }
+
+    return signal, analysis
