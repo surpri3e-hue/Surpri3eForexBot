@@ -4,6 +4,7 @@ import io
 import pandas as pd
 import numpy as np
 import matplotlib.pyplot as plt
+import matplotlib.ticker as mticker
 from datetime import datetime, timedelta
 from telegram import (
     Update,
@@ -59,7 +60,7 @@ logging.basicConfig(
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
-SUPPORT_ID = "@RealSurprise"  # ایدی پشتیبانی
+SUPPORT_ID = "@RealSurprise"
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
@@ -124,110 +125,174 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ تابع تولید چارت ============
-def generate_chart(df, signal, timeframe):
-    """تولید چارت حرفه‌ای مثل تریدینگ ویو"""
+# ============ تابع تولید چارت مثل تریدینگ ویو ============
+def generate_chart_tradingview(df, signal, timeframe):
+    """
+    تولید چارت شبیه تریدینگ ویو با کندل‌های حرفه‌ای
+    """
     try:
+        # 30 کندل آخر
         df_copy = df.tail(40).copy()
         
-        fig, (ax1, ax2) = plt.subplots(
-            2, 1,
-            figsize=(14, 10),
-            gridspec_kw={'height_ratios': [3, 1]},
-            sharex=True
-        )
+        # تنظیمات
+        plt.style.use('dark_background')
+        fig = plt.figure(figsize=(16, 10), facecolor='#131722')
+        
+        # تقسیم صفحه
+        gs = fig.add_gridspec(2, 1, height_ratios=[3.5, 1], hspace=0)
+        ax1 = fig.add_subplot(gs[0], facecolor='#131722')
+        ax2 = fig.add_subplot(gs[1], sharex=ax1, facecolor='#131722')
         
         # ===== کندل‌ها =====
         width = 0.6
+        body_width = 0.8
+        wick_width = 0.05
+        
+        # جداسازی کندل‌های صعودی و نزولی
         up = df_copy[df_copy['Close'] >= df_copy['Open']]
         down = df_copy[df_copy['Close'] < df_copy['Open']]
         
-        # کندل‌های صعودی (سبز)
-        ax1.bar(up.index, up['Close'] - up['Open'], width, bottom=up['Open'], color='#26a69a')
-        ax1.bar(up.index, up['High'] - up['Close'], width/10, bottom=up['Close'], color='#26a69a')
-        ax1.bar(up.index, up['Low'] - up['Open'], width/10, bottom=up['Open'], color='#26a69a')
+        # ===== کندل‌های صعودی (سبز) =====
+        if not up.empty:
+            # بدنه
+            ax1.bar(up.index, up['Close'] - up['Open'], body_width, 
+                    bottom=up['Open'], color='#26a69a', edgecolor='#26a69a', linewidth=0.5)
+            # فتیله بالا
+            ax1.bar(up.index, up['High'] - up['Close'], wick_width, 
+                    bottom=up['Close'], color='#26a69a', linewidth=0.5)
+            # فتیله پایین
+            ax1.bar(up.index, up['Low'] - up['Open'], wick_width, 
+                    bottom=up['Open'], color='#26a69a', linewidth=0.5)
         
-        # کندل‌های نزولی (قرمز)
-        ax1.bar(down.index, down['Close'] - down['Open'], width, bottom=down['Open'], color='#ef5350')
-        ax1.bar(down.index, down['High'] - down['Open'], width/10, bottom=down['Open'], color='#ef5350')
-        ax1.bar(down.index, down['Low'] - down['Close'], width/10, bottom=down['Close'], color='#ef5350')
+        # ===== کندل‌های نزولی (قرمز) =====
+        if not down.empty:
+            # بدنه
+            ax1.bar(down.index, down['Close'] - down['Open'], body_width, 
+                    bottom=down['Open'], color='#ef5350', edgecolor='#ef5350', linewidth=0.5)
+            # فتیله بالا
+            ax1.bar(down.index, down['High'] - down['Open'], wick_width, 
+                    bottom=down['Open'], color='#ef5350', linewidth=0.5)
+            # فتیله پایین
+            ax1.bar(down.index, down['Low'] - down['Close'], wick_width, 
+                    bottom=down['Close'], color='#ef5350', linewidth=0.5)
         
-        # ===== خطوط سیگنال با RR ثابت 1:2 =====
+        # ===== خطوط سیگنال =====
         entry = signal['entry']
         
         # محاسبه SL و TP با نسبت 1:2
         if signal['direction'] == 'BUY':
-            sl = round(entry - 5, 2)      # 5 دلار ریسک
-            tp = round(entry + 10, 2)     # 10 دلار ریوارد (1:2)
-        else:  # SELL
-            sl = round(entry + 5, 2)      # 5 دلار ریسک
-            tp = round(entry - 10, 2)     # 10 دلار ریوارد (1:2)
+            sl = round(entry - 5, 2)
+            tp = round(entry + 10, 2)
+        else:
+            sl = round(entry + 5, 2)
+            tp = round(entry - 10, 2)
         
-        # بروزرسانی سیگنال
         signal['sl'] = sl
         signal['tp'] = tp
         
-        # خط Entry (آبی)
-        ax1.axhline(y=entry, color='#2962ff', linestyle='--', linewidth=2.5, label=f'Entry: {entry:.2f}')
+        # ===== کشیدن خطوط =====
+        # خط Entry
+        ax1.axhline(y=entry, color='#2962ff', linestyle='--', linewidth=2, 
+                   alpha=0.9, zorder=10)
+        ax1.text(df_copy.index[-1], entry, f' Entry {entry:.2f}', 
+                color='#2962ff', fontsize=10, fontweight='bold',
+                verticalalignment='bottom', horizontalalignment='right')
         
-        # خط SL (قرمز)
-        ax1.axhline(y=sl, color='#ff1744', linestyle='--', linewidth=2.5, label=f'SL: {sl:.2f}')
+        # خط SL
+        ax1.axhline(y=sl, color='#ff1744', linestyle='--', linewidth=2, 
+                   alpha=0.9, zorder=10)
+        ax1.text(df_copy.index[-1], sl, f' SL {sl:.2f}', 
+                color='#ff1744', fontsize=10, fontweight='bold',
+                verticalalignment='top', horizontalalignment='right')
         
-        # خط TP (سبز)
-        ax1.axhline(y=tp, color='#00e676', linestyle='--', linewidth=2.5, label=f'TP: {tp:.2f}')
+        # خط TP
+        ax1.axhline(y=tp, color='#00e676', linestyle='--', linewidth=2, 
+                   alpha=0.9, zorder=10)
+        ax1.text(df_copy.index[-1], tp, f' TP {tp:.2f}', 
+                color='#00e676', fontsize=10, fontweight='bold',
+                verticalalignment='bottom', horizontalalignment='right')
         
-        # ===== نواحی ریسک و ریوارد =====
-        ax1.axhspan(min(entry, sl), max(entry, sl), alpha=0.15, color='red', label='Risk Zone')
-        ax1.axhspan(min(entry, tp), max(entry, tp), alpha=0.15, color='green', label='Reward Zone')
+        # ===== نواحی =====
+        ax1.axhspan(min(entry, sl), max(entry, sl), alpha=0.1, color='red', zorder=0)
+        ax1.axhspan(min(entry, tp), max(entry, tp), alpha=0.1, color='green', zorder=0)
         
-        # ===== تنظیمات =====
-        ax1.set_title(f'XAUUSD - {timeframe}', fontsize=14, fontweight='bold')
-        ax1.set_ylabel('Price (USD)', fontsize=12)
-        ax1.legend(loc='upper left', fontsize=10)
-        ax1.grid(True, alpha=0.3)
+        # ===== تنظیمات محور اول =====
+        ax1.set_title(f'XAUUSD - {timeframe}', fontsize=16, fontweight='bold', 
+                      color='white', pad=10)
+        ax1.set_ylabel('Price', fontsize=11, color='#787b86')
+        ax1.tick_params(colors='#787b86', labelsize=9)
+        ax1.grid(True, alpha=0.1, color='#2a2e39', linestyle='-')
+        ax1.set_facecolor('#131722')
+        
+        # ===== محاسبه قیمت‌های بالا و پایین =====
+        high_price = df_copy['High'].max()
+        low_price = df_copy['Low'].min()
+        price_range = high_price - low_price
+        
+        # تنظیم محدوده قیمت
+        ax1.set_ylim(low_price - price_range * 0.08, high_price + price_range * 0.08)
+        
+        # ===== نمایش قیمت بالا و پایین =====
+        ax1.text(0.02, 0.98, f'H: {high_price:.2f}', transform=ax1.transAxes,
+                color='#787b86', fontsize=9, verticalalignment='top')
+        ax1.text(0.02, 0.02, f'L: {low_price:.2f}', transform=ax1.transAxes,
+                color='#787b86', fontsize=9, verticalalignment='bottom')
+        
+        # ===== نمایش قیمت فعلی =====
+        current = df_copy['Close'].iloc[-1]
+        ax1.text(0.98, 0.02, f'{current:.2f}', transform=ax1.transAxes,
+                color='white', fontsize=12, fontweight='bold',
+                horizontalalignment='right', verticalalignment='bottom',
+                bbox=dict(boxstyle='round,pad=0.3', facecolor='#2962ff', alpha=0.8))
+        
+        # ===== محاسبه RR =====
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        rr = round(reward / risk, 2) if risk > 0 else 2.0
+        
+        direction = 'BUY' if signal['direction'] == 'BUY' else 'SELL'
+        dir_color = '#26a69a' if direction == 'BUY' else '#ef5350'
+        
+        # ===== نمایش اطلاعات =====
+        info_text = f'{direction}  |  RR 1:{rr}  |  Score {signal.get("score", 0)}'
+        ax1.text(0.5, 0.98, info_text, transform=ax1.transAxes,
+                color='white', fontsize=12, fontweight='bold',
+                horizontalalignment='center', verticalalignment='top',
+                bbox=dict(boxstyle='round,pad=0.5', facecolor='#2a2e39', alpha=0.8))
         
         # ===== حجم =====
         colors = ['#26a69a' if df_copy['Close'].iloc[i] >= df_copy['Open'].iloc[i] else '#ef5350' 
                   for i in range(len(df_copy))]
-        ax2.bar(df_copy.index, df_copy['Volume'], color=colors, alpha=0.7)
-        ax2.set_ylabel('Volume', fontsize=12)
-        ax2.grid(True, alpha=0.3)
+        ax2.bar(df_copy.index, df_copy['Volume'], color=colors, alpha=0.7, width=0.7)
+        ax2.set_ylabel('Volume', fontsize=11, color='#787b86')
+        ax2.tick_params(colors='#787b86', labelsize=9)
+        ax2.grid(True, alpha=0.1, color='#2a2e39', linestyle='-')
+        ax2.set_facecolor('#131722')
         
-        # ===== نمایش اطلاعات روی چارت =====
-        direction = 'BUY' if signal['direction'] == 'BUY' else 'SELL'
-        color = 'green' if direction == 'BUY' else 'red'
+        # مخفی کردن x-axis
+        plt.setp(ax1.get_xticklabels(), visible=False)
         
-        info_text = f'Signal: {direction}  |  RR: 1:2  |  Score: {signal.get("score", 0)}'
-        ax1.text(0.02, 0.98, info_text, transform=ax1.transAxes,
-                fontsize=12, fontweight='bold', color='white',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.8))
-        
-        # نمایش قیمت فعلی
-        current_price = df_copy['Close'].iloc[-1]
-        ax1.text(0.98, 0.02, f'Current: {current_price:.2f}', transform=ax1.transAxes,
-                fontsize=11, fontweight='bold', color='white',
-                bbox=dict(boxstyle='round,pad=0.5', facecolor='black', alpha=0.7),
-                horizontalalignment='right')
-        
+        # ===== ذخیره =====
         plt.tight_layout()
         
-        # ذخیره
         buf = io.BytesIO()
-        plt.savefig(buf, format='png', dpi=120, bbox_inches='tight', facecolor='white')
+        plt.savefig(buf, format='png', dpi=150, bbox_inches='tight', 
+                    facecolor='#131722', edgecolor='none')
         buf.seek(0)
-        plt.close()
+        plt.close('all')
         
         return buf
         
     except Exception as e:
         logging.error(f"Chart error: {e}")
+        import traceback
+        traceback.print_exc()
         return None
 
 # ============ ارسال سیگنال با چارت ============
 async def send_signal_with_chart(target, trade_id, signal, df, timeframe):
-    chart_buf = generate_chart(df, signal, timeframe)
+    chart_buf = generate_chart_tradingview(df, signal, timeframe)
     
-    # دریافت قیمت لحظه‌ای
     current_price = get_current_price()
     
     message = (
@@ -376,28 +441,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         
         try:
-            # ===== دریافت قیمت لحظه‌ای =====
             current_price = get_current_price()
-            
-            # ===== دریافت دیتا برای چارت =====
             df = get_gold_candles(timeframe)
             
-            # ===== تحلیل ICT =====
             analysis = ict_analysis(df) if df is not None else None
             signal = create_signal(df, analysis)
             
             if signal:
-                # اگه قیمت لحظه‌ای داریم، جایگزین کن
                 if current_price:
                     signal['entry'] = round(current_price, 2)
                 
                 trade_id = save_trade(signal)
                 
-                # ارسال سیگنال با چارت
                 if df is not None and not df.empty:
                     await send_signal_with_chart(query.message, trade_id, signal, df, display_timeframe)
                 else:
-                    # فقط متن
                     message = (
                         f"🚨 **سیگنال جدید**\n\n"
                         f"💰 **قیمت لحظه‌ای:** {current_price if current_price else 'N/A'}\n"
