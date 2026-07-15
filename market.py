@@ -1,97 +1,134 @@
+# market.py
+import requests
 import pandas as pd
 import numpy as np
-import yfinance as yf
 from datetime import datetime, timedelta
+import os
+
+def get_gold_price():
+    """
+    دریافت قیمت لحظه‌ای طلا از چند منبع
+    """
+    # ===== منبع 1: یاهو =====
+    try:
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        data = response.json()
+        
+        if "chart" in data and "result" in data["chart"]:
+            result = data["chart"]["result"][0]
+            meta = result["meta"]
+            price = meta.get("regularMarketPrice")
+            if price:
+                return float(price)
+    except:
+        pass
+    
+    # ===== منبع 2: Twelve Data =====
+    try:
+        api_key = os.getenv("TWELVE_DATA")
+        if api_key:
+            url = f"https://api.twelvedata.com/price?symbol=XAU/USD&apikey={api_key}"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            if "price" in data:
+                return float(data["price"])
+    except:
+        pass
+    
+    # ===== منبع 3: Gold API (رایگان) =====
+    try:
+        url = "https://api.gold-api.com/price/XAU"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if "price" in data:
+            return float(data["price"])
+    except:
+        pass
+    
+    # ===== منبع 4: Metal Price API =====
+    try:
+        url = "https://api.metalpriceapi.com/v1/latest?api_key=demo&base=USD&currencies=XAU"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if "rates" in data and "XAU" in data["rates"]:
+            return float(data["rates"]["XAU"])
+    except:
+        pass
+    
+    # ===== آخرین راه: مقدار پیش‌فرض =====
+    return 2000.00
 
 def get_gold_candles(timeframe="5min"):
     """
-    دریافت دیتای طلا از یاهو
+    دریافت دیتای کندلی با قیمت‌های بروز
     """
     try:
-        # تنظیم بازه زمانی
         end = datetime.now()
         
-        if timeframe == "1min":
-            start = end - timedelta(days=1)
-            interval = "1m"
-        elif timeframe == "5min":
-            start = end - timedelta(days=2)
-            interval = "5m"
-        elif timeframe == "15min":
-            start = end - timedelta(days=5)
-            interval = "15m"
-        elif timeframe == "1h":
-            start = end - timedelta(days=10)
-            interval = "1h"
-        elif timeframe == "4h":
-            start = end - timedelta(days=20)
-            interval = "1h"  # یاهو 4h نداره، از 1h استفاده میکنیم
-        elif timeframe == "1d":
-            start = end - timedelta(days=60)
-            interval = "1d"
-        else:
-            start = end - timedelta(days=2)
-            interval = "5m"
-        
-        # دریافت دیتا از یاهو
-        gold = yf.Ticker("GC=F")
-        df = gold.history(start=start, end=end, interval=interval)
-        
-        if df is not None and len(df) > 0:
-            # پاکسازی دیتا
-            df = df.dropna()
-            if len(df) > 0:
-                return df
-        
-        # اگر یاهو کار نکرد، دیتای تست
-        print("⚠️ Yahoo data failed, using test data")
-        return generate_test_data(timeframe)
-        
-    except Exception as e:
-        print(f"❌ Market error: {e}")
-        return generate_test_data(timeframe)
-
-def generate_test_data(timeframe="5min"):
-    """
-    دیتای تست واقع‌گرایانه
-    """
-    try:
-        periods = 50
-        now = datetime.now()
-        
-        freq_map = {
-            "1min": "1min",
-            "5min": "5min",
-            "15min": "15min",
+        # تنظیم بازه زمانی
+        interval_map = {
+            "1min": "1m",
+            "5min": "5m",
+            "15min": "15m",
             "1h": "1h",
-            "4h": "4h",
+            "4h": "1h",
             "1d": "1d"
         }
-        freq = freq_map.get(timeframe, "5min")
         
-        dates = pd.date_range(end=now, periods=periods, freq=freq)
+        interval = interval_map.get(timeframe, "5m")
         
-        # قیمت با روند
-        base = 2000 + np.random.randn() * 30
-        trend = np.cumsum(np.random.randn(periods) * 1.5)
-        close = base + trend
+        # دریافت از یاهو
+        url = f"https://query1.finance.yahoo.com/v8/finance/chart/GC=F?interval={interval}&range=5d"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=15)
+        data = response.json()
         
-        high = close + np.abs(np.random.randn(periods) * 2 + 1)
-        low = close - np.abs(np.random.randn(periods) * 2 + 1)
-        open_price = close - np.random.randn(periods) * 0.5
+        if "chart" in data and "result" in data["chart"]:
+            result = data["chart"]["result"][0]
+            timestamps = result["timestamp"]
+            indicators = result["indicators"]["quote"][0]
+            
+            df = pd.DataFrame({
+                'Date': pd.to_datetime(timestamps, unit='s'),
+                'Open': indicators['open'],
+                'High': indicators['high'],
+                'Low': indicators['low'],
+                'Close': indicators['close'],
+                'Volume': indicators['volume']
+            })
+            
+            df = df.dropna()
+            df = df.set_index('Date')
+            df = df.sort_index()
+            
+            if len(df) > 5:
+                return df
         
-        data = {
-            'Open': open_price,
-            'High': high,
-            'Low': low,
-            'Close': close,
-            'Volume': np.random.randint(100, 1000, periods)
-        }
-        
-        df = pd.DataFrame(data, index=dates)
-        df = df.dropna()
-        return df
+        return None
         
     except Exception as e:
-        print(f"❌ Test data error: {e}")
+        print(f"Candles error: {e}")
+        return None
+
+def get_current_price():
+    """
+    دریافت قیمت لحظه‌ای (برای نمایش)
+    """
+    try:
+        # تلاش از یاهو
+        url = "https://query1.finance.yahoo.com/v8/finance/chart/GC=F"
+        headers = {'User-Agent': 'Mozilla/5.0'}
+        response = requests.get(url, headers=headers, timeout=10)
+        data = response.json()
+        
+        if "chart" in data and "result" in data["chart"]:
+            result = data["chart"]["result"][0]
+            meta = result["meta"]
+            return float(meta["regularMarketPrice"])
+        
+        return None
+        
+    except:
         return None
