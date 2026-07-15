@@ -1,10 +1,30 @@
+# ============ RR اختصاصی کاربر ============
+def set_user_rr(user_id, rr):
+    """تنظیم RR اختصاصی برای هر کاربر"""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET rr_ratio=? WHERE id=?", (rr, user_id))
+    conn.commit()
+    conn.close()
+
+def get_user_rr(user_id):
+    """دریافت RR اختصاصی کاربر"""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT rr_ratio FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result and result[0] is not None:
+        return float(result[0])
+    return float(get_setting('rr_ratio') or '2')
+
+
 # ============ آمار هفتگی و ماهانه ============
 def get_weekly_stats():
     """دریافت وین‌ریت هفته جاری"""
     conn = connect()
     cursor = conn.cursor()
     
-    # شروع هفته (دوشنبه)
     today = datetime.now()
     start_of_week = today - timedelta(days=today.weekday())
     start_of_week_str = start_of_week.strftime('%Y-%m-%d')
@@ -26,7 +46,6 @@ def get_monthly_stats():
     conn = connect()
     cursor = conn.cursor()
     
-    # شروع ماه
     today = datetime.now()
     start_of_month = today.replace(day=1)
     start_of_month_str = start_of_month.strftime('%Y-%m-%d')
