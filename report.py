@@ -1,33 +1,19 @@
 from database import get_statistics
-
-
+from users import get_users_count
 
 def create_report():
-
     stats = get_statistics()
-
+    users = get_users_count()
 
     return f"""
-📊 Surpri3e AI Report
+📊 **گزارش عملکرد**
 
+👥 **کاربران:** {users}
+📈 **کل معاملات:** {stats['total']}
+✅ **برنده:** {stats['wins']}
+❌ **بازنده:** {stats['losses']}
+🎯 **نرخ موفقیت:** {stats['winrate']}%
+💰 **فاکتور سود:** {stats['profit_factor']}
 
-📌 Total Trades:
-{stats['total']}
-
-
-✅ Wins:
-{stats['wins']}
-
-
-❌ Losses:
-{stats['losses']}
-
-
-🎯 Win Rate:
-{stats['winrate']}%
-
-
-💰 Profit Factor:
-{stats['profit_factor']}
-
+**وضعیت:** 🟢 آنلاین
 """
