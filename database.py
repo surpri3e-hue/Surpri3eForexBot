@@ -263,6 +263,55 @@ def get_monthly_stats():
     winrate = round((wins / total) * 100, 2) if total > 0 else 0
     return {'total': total, 'wins': wins, 'winrate': winrate}
 
+# ============ مدیریت سیگنال روزانه ============
+def reset_daily_signals():
+    """ریست کردن سیگنال‌های روزانه همه کاربران"""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET signals_used_today = 0, last_signal_reset = CURRENT_TIMESTAMP")
+    conn.commit()
+    conn.close()
+
+def get_user_signals_left(user_id):
+    """دریافت تعداد سیگنال باقی‌مانده کاربر"""
+    import os
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
+
+    if user_id == ADMIN_ID:
+        return 999
+
+    if is_user_vip(user_id):
+        return 999
+
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT daily_signal_limit, signals_used_today FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+
+    if result:
+        limit, used = result
+        return max(0, limit - used)
+    return 0
+
+def use_signal(user_id):
+    """استفاده از یک سیگنال"""
+    import os
+    ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
+
+    if user_id == ADMIN_ID:
+        return True
+
+    if is_user_vip(user_id):
+        return True
+
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET signals_used_today = signals_used_today + 1 WHERE id=?", (user_id,))
+    conn.commit()
+    conn.close()
+    return True
+
 # ============ معاملات ============
 def save_trade(signal, user_id=0, style='ZIGZAG'):
     conn = connect()
