@@ -18,12 +18,8 @@ def get_gold_candles(timeframe="5min", count=50):
     
     try:
         granularity = {
-            "1min": "1min",
-            "5min": "5min",
-            "15min": "15min",
-            "1h": "1h",
-            "4h": "4h",
-            "1d": "1day"
+            "1min": "1min", "5min": "5min", "15min": "15min",
+            "1h": "1h", "4h": "4h", "1d": "1day"
         }
         
         url = "https://api.twelvedata.com/time_series"
@@ -71,12 +67,8 @@ def generate_test_data(timeframe="5min", count=50):
         now = get_tehran_time()
         
         freq_map = {
-            "1min": "1min",
-            "5min": "5min",
-            "15min": "15min",
-            "1h": "1h",
-            "4h": "4h",
-            "1d": "1d"
+            "1min": "1min", "5min": "5min", "15min": "15min",
+            "1h": "1h", "4h": "4h", "1d": "1d"
         }
         
         dates = pd.date_range(end=now, periods=count, freq=freq_map.get(timeframe, "5min"))
@@ -106,24 +98,50 @@ def generate_test_data(timeframe="5min", count=50):
         return None
 
 def get_current_price():
-    if not TWELVE_DATA_KEY:
-        return None
-    
+    """
+    دریافت قیمت لحظه‌ای از GoldAPI (دقیق‌ترین)
+    """
+    # ===== منبع 1: GoldAPI =====
     try:
-        url = f"https://api.twelvedata.com/price"
-        params = {
-            "symbol": "XAU/USD",
-            "apikey": TWELVE_DATA_KEY
-        }
-        
-        response = requests.get(url, params=params, timeout=10)
+        url = "https://api.gold-api.com/price/XAU"
+        response = requests.get(url, timeout=10)
         data = response.json()
-        
         if "price" in data:
-            return float(data["price"])
-        else:
-            return None
-            
+            price = float(data["price"])
+            print(f"✅ GoldAPI: {price}")
+            return round(price, 2)
     except Exception as e:
-        print(f"❌ Price error: {e}")
-        return None
+        print(f"❌ GoldAPI error: {e}")
+    
+    # ===== منبع 2: Twelve Data =====
+    if TWELVE_DATA_KEY:
+        try:
+            url = f"https://api.twelvedata.com/price"
+            params = {
+                "symbol": "XAU/USD",
+                "apikey": TWELVE_DATA_KEY
+            }
+            
+            response = requests.get(url, params=params, timeout=10)
+            data = response.json()
+            
+            if "price" in data:
+                price = float(data["price"])
+                print(f"✅ Twelve Data: {price}")
+                return round(price, 2)
+        except Exception as e:
+            print(f"❌ Twelve Data error: {e}")
+    
+    # ===== منبع 3: MetalPriceAPI =====
+    try:
+        url = "https://api.metalpriceapi.com/v1/latest?api_key=demo&base=USD&currencies=XAU"
+        response = requests.get(url, timeout=10)
+        data = response.json()
+        if "rates" in data and "XAU" in data["rates"]:
+            price = float(data["rates"]["XAU"])
+            print(f"✅ MetalPriceAPI: {price}")
+            return round(price, 2)
+    except Exception as e:
+        print(f"❌ MetalPriceAPI error: {e}")
+    
+    return None
