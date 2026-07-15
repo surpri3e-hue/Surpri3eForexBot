@@ -98,7 +98,6 @@ def language_keyboard():
 
 
 def style_keyboard(lang='fa'):
-    """کیبورد انتخاب سبک - فقط Surpri3e Strategy"""
     keyboard = [
         [InlineKeyboardButton("🚀 Surpri3e Strategy", callback_data="style_surpri3e")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
@@ -236,15 +235,10 @@ async def check_channel_membership(user_id, context):
 
 # ============ پیام لودینگ متحرک ============
 async def send_loading_animation(target, lang='fa'):
-    """ارسال پیام لودینگ متحرک به مدت ۳۰ ثانیه"""
     frames = ["🔄 تحلیل بازار...", "📊 بررسی ساختار قیمت...", "🔍 جستجوی سیگنال...", "🎯 در حال پردازش..."]
-    messages = []
     
-    # ارسال پیام اولیه
     msg = await target.reply_text("🔄 **تحلیل بازار در حال انجام...**\n⏳ لطفاً ۳۰ ثانیه صبر کنید.", parse_mode='Markdown')
-    messages.append(msg)
     
-    # آپدیت پیام هر ۵ ثانیه
     for i, frame in enumerate(frames):
         await asyncio.sleep(5)
         try:
@@ -289,11 +283,9 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
     signal['sl'] = sl
     signal['tp'] = tp
 
-    # دلایل حرفه‌ای‌تر
-    style = analysis.get('style', 'Zigzag')
+    style = analysis.get('style', 'Surpri3e Strategy')
     reasons = analysis.get('reasons', ['دلیلی ثبت نشده'])
     
-    # بهبود دلایل
     improved_reasons = []
     for r in reasons:
         if "شکست سقف" in r:
@@ -314,7 +306,7 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
     message = f"""
 🚀 **سیگنال Surpri3e**
 
-**📊 استراتژی:** Surpri3e Strategy (زیگزاگ + ICT)
+**📊 استراتژی:** Surpri3e Strategy
 **📈 جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
 **📍 ورود:** {entry:.2f}
 **🛑 حد ضرر (SL):** {sl:.2f}
@@ -410,9 +402,9 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب سبک (فقط Surpri3e Strategy) =====
+    # ===== انتخاب سبک =====
     if data.startswith("style_"):
-        style = "ZIGZAG"  # همیشه زیگزاگ
+        style = "ZIGZAG"
         context.user_data['style'] = style
 
         conn = connect()
@@ -462,10 +454,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ===== نمایش لودینگ متحرک =====
         loading_msg = await send_loading_animation(query.message, lang)
         
-        # ===== دریافت سیگنال (تحلیل واقعی) =====
         try:
             df = get_gold_candles(timeframe)
             if df is not None and not df.empty:
@@ -475,7 +465,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     trade_id = save_trade(signal, user_id, "ZIGZAG")
                     use_signal(user_id)
                     
-                    # حذف پیام لودینگ
                     try:
                         await loading_msg.delete()
                     except:
@@ -632,7 +621,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== عملکرد (با وین‌ریت روزانه، هفتگی، ماهانه) =====
+    # ===== عملکرد =====
     if data == "performance":
         stats = get_statistics()
         weekly_stats = get_weekly_stats()
