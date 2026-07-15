@@ -1,171 +1,184 @@
-# smc_logic.py
+# ict_logic.py
 import numpy as np
 
-def analyze_smc(df):
+def analyze_ict(df):
     """
-    تحلیل Smart Money Concepts (SMC) حرفه‌ای
+    تحلیل ICT با خروجی تضمینی
     """
     if df is None or len(df) < 20:
         return None, None
-    
+
     close = df['Close'].values
     high = df['High'].values
     low = df['Low'].values
-    
+
     current = close[-1]
-    
-    # ===== 1. شناسایی Order Block (سفارش بلوک) =====
-    buy_ob = None
-    sell_ob = None
-    
-    if len(df) >= 15:
+    prev = close[-2]
+
+    # ===== 1. شناسایی ساختار بازار =====
+    bos_up = False
+    bos_down = False
+
+    last_high = max(high[-5:])
+    last_low = min(low[-5:])
+
+    if current > last_high and len(high) > 10:
+        if current > max(high[-10:-5]) + 2:
+            bos_up = True
+
+    if current < last_low and len(low) > 10:
+        if current < min(low[-10:-5]) - 2:
+            bos_down = True
+
+    # ===== 2. FVG =====
+    fvg_up = False
+    fvg_down = False
+
+    if len(df) >= 4:
         for i in range(len(df)-3, 0, -1):
-            # Order Block خرید: کندل نزولی با حجم بالا که بعدش قیمت بالا رفت
-            if df['Close'].iloc[i] < df['Open'].iloc[i]:
-                # بررسی افزایش حجم
-                if i > 5 and df['Volume'].iloc[i] > np.mean(df['Volume'].iloc[i-5:i]) * 1.5:
-                    if df['Close'].iloc[i+1] > df['High'].iloc[i]:
-                        buy_ob = {'price': df['High'].iloc[i], 'index': i}
-                        break
-        
-        for i in range(len(df)-3, 0, -1):
-            # Order Block فروش: کندل صعودی با حجم بالا که بعدش قیمت پایین رفت
-            if df['Close'].iloc[i] > df['Open'].iloc[i]:
-                if i > 5 and df['Volume'].iloc[i] > np.mean(df['Volume'].iloc[i-5:i]) * 1.5:
-                    if df['Close'].iloc[i+1] < df['Low'].iloc[i]:
-                        sell_ob = {'price': df['Low'].iloc[i], 'index': i}
-                        break
-    
-    # ===== 2. شناسایی FVG (Fair Value Gap) =====
-    fvg_up = None
-    fvg_down = None
-    
-    if len(df) >= 5:
-        for i in range(len(df)-3, 0, -1):
-            # FVG صعودی
             if df['Low'].iloc[i] > df['High'].iloc[i+1] and df['High'].iloc[i-1] < df['Low'].iloc[i]:
                 if current < df['Low'].iloc[i] and current > df['High'].iloc[i+1]:
-                    fvg_up = {'upper': df['Low'].iloc[i], 'lower': df['High'].iloc[i+1]}
+                    fvg_up = True
                     break
-            
-            # FVG نزولی
+
             if df['High'].iloc[i] < df['Low'].iloc[i+1] and df['Low'].iloc[i-1] > df['High'].iloc[i]:
                 if current > df['High'].iloc[i] and current < df['Low'].iloc[i+1]:
-                    fvg_down = {'upper': df['Low'].iloc[i+1], 'lower': df['High'].iloc[i]}
+                    fvg_down = True
                     break
-    
-    # ===== 3. شناسایی Liquidity Sweep =====
-    buy_sweep = False
-    sell_sweep = False
-    
-    if len(high) > 30:
-        # شکار نقدینگی خرید: قیمت به بالاترین حد رسیده و برگشته
-        highest = max(high[-30:])
-        if current < highest - 5 and high[-1] > highest - 2:
-            buy_sweep = True
-        
-        # شکار نقدینگی فروش: قیمت به پایین‌ترین حد رسیده و برگشته
-        lowest = min(low[-30:])
-        if current > lowest + 5 and low[-1] < lowest + 2:
-            sell_sweep = True
-    
-    # ===== 4. شناسایی Market Structure Shift =====
-    mss_up = False
-    mss_down = False
-    
-    if len(high) > 15:
-        last_high = max(high[-5:])
-        last_low = min(low[-5:])
-        
-        # تغییر ساختار صعودی
-        if current > last_high and low[-1] > min(low[-10:-5]):
-            mss_up = True
-        
-        # تغییر ساختار نزولی
-        if current < last_low and high[-1] < max(high[-10:-5]):
-            mss_down = True
-    
-    # ===== 5. تصمیم نهایی =====
-    reasons = []
-    score = 0
-    direction = None
-    
-    # شرایط BUY
+
+    # ===== 3. Order Block =====
+    buy_ob = False
+    sell_ob = False
+
+    if len(df) >= 10:
+        for i in range(len(df)-2, 0, -1):
+            if df['Close'].iloc[i] < df['Open'].iloc[i]:
+                if df['Close'].iloc[i+1] > df['Open'].iloc[i+1]:
+                    if current > df['High'].iloc[i]:
+                        buy_ob = True
+                        break
+
+        for i in range(len(df)-2, 0, -1):
+            if df['Close'].iloc[i] > df['Open'].iloc[i]:
+                if df['Close'].iloc[i+1] < df['Open'].iloc[i+1]:
+                    if current < df['Low'].iloc[i]:
+                        sell_ob = True
+                        break
+
+    # ===== 4. نقدینگی =====
+    buy_liquidity = False
+    sell_liquidity = False
+
+    if len(high) > 20:
+        recent_highs = high[-20:]
+        if current > max(recent_highs) - 2:
+            buy_liquidity = True
+
+        recent_lows = low[-20:]
+        if current < min(recent_lows) + 2:
+            sell_liquidity = True
+
+    # ===== 5. میانگین متحرک =====
+    ma20 = np.mean(close[-20:])
+    ma50 = np.mean(close[-50:]) if len(close) >= 50 else ma20
+
+    # ===== 6. محاسبه امتیاز BUY =====
     buy_score = 0
-    if buy_ob:
-        buy_score += 35
-        reasons.append(f"Order Block خرید در {buy_ob['price']:.2f}")
+    buy_reasons = []
+
+    if bos_up:
+        buy_score += 30
+        buy_reasons.append("شکست سقف قبلی (BOS UP)")
     if fvg_up:
         buy_score += 25
-        reasons.append(f"FVG صعودی ({fvg_up['lower']:.2f} - {fvg_up['upper']:.2f})")
-    if sell_sweep:
-        buy_score += 20
-        reasons.append("شکار نقدینگی فروش")
-    if mss_up:
-        buy_score += 20
-        reasons.append("تغییر ساختار صعودی")
-    
-    # شرایط SELL
+        buy_reasons.append("FVG صعودی")
+    if buy_ob:
+        buy_score += 25
+        buy_reasons.append("Order Block خرید")
+    if buy_liquidity:
+        buy_score += 15
+        buy_reasons.append("نقدینگی خرید")
+    if current > ma20:
+        buy_score += 15
+        buy_reasons.append("قیمت بالای MA20")
+    if current > ma50:
+        buy_score += 10
+        buy_reasons.append("قیمت بالای MA50")
+
+    # ===== 7. محاسبه امتیاز SELL =====
     sell_score = 0
     sell_reasons = []
-    if sell_ob:
-        sell_score += 35
-        sell_reasons.append(f"Order Block فروش در {sell_ob['price']:.2f}")
+
+    if bos_down:
+        sell_score += 30
+        sell_reasons.append("شکست کف قبلی (BOS DOWN)")
     if fvg_down:
         sell_score += 25
-        sell_reasons.append(f"FVG نزولی ({fvg_down['upper']:.2f} - {fvg_down['lower']:.2f})")
-    if buy_sweep:
-        sell_score += 20
-        sell_reasons.append("شکار نقدینگی خرید")
-    if mss_down:
-        sell_score += 20
-        sell_reasons.append("تغییر ساختار نزولی")
-    
-    # ===== 6. انتخاب جهت =====
-    if buy_score >= 60 and buy_score > sell_score:
+        sell_reasons.append("FVG نزولی")
+    if sell_ob:
+        sell_score += 25
+        sell_reasons.append("Order Block فروش")
+    if sell_liquidity:
+        sell_score += 15
+        sell_reasons.append("نقدینگی فروش")
+    if current < ma20:
+        sell_score += 15
+        sell_reasons.append("قیمت پایین‌تر از MA20")
+    if current < ma50:
+        sell_score += 10
+        sell_reasons.append("قیمت پایین‌تر از MA50")
+
+    # ===== 8. انتخاب نهایی (با آستانه پایین‌تر) =====
+    direction = None
+    reasons = []
+
+    # اگر BUY امتیاز بیشتری داشت و حداقل ۳۰ بود
+    if buy_score >= 30 and buy_score >= sell_score:
         direction = "BUY"
-        score = buy_score
-    elif sell_score >= 60 and sell_score > buy_score:
+        reasons = buy_reasons
+    # اگر SELL امتیاز بیشتری داشت و حداقل ۳۰ بود
+    elif sell_score >= 30 and sell_score > buy_score:
         direction = "SELL"
-        score = sell_score
         reasons = sell_reasons
+    # در غیر این صورت، بر اساس تغییر قیمت تصمیم بگیر
     else:
-        return None, None
-    
-    # ===== 7. محاسبه Entry/SL/TP =====
+        price_change = ((current - prev) / prev) * 100
+        if price_change > 0.05:
+            direction = "BUY"
+            reasons = ["افزایش قیمت لحظه‌ای"]
+        elif price_change < -0.05:
+            direction = "SELL"
+            reasons = ["کاهش قیمت لحظه‌ای"]
+        else:
+            # آخرین راهکار: پیش‌فرض BUY
+            direction = "BUY"
+            reasons = ["شرایط خنثی، پیش‌فرض BUY"]
+
+    # ===== 9. محاسبه Entry/SL/TP =====
     from database import get_setting
     rr_ratio = float(get_setting('rr_ratio') or '2')
     RISK = 5.0
     REWARD = RISK * rr_ratio
-    
-    # ورود دقیق‌تر با استفاده از Order Block
+
     if direction == "BUY":
-        if buy_ob:
-            entry = round(buy_ob['price'] + 0.5, 2)
-        else:
-            entry = round(current, 2)
-        sl = round(entry - RISK, 2)
-        tp = round(entry + REWARD, 2)
+        entry = round(current, 2)
+        sl = round(current - RISK, 2)
+        tp = round(current + REWARD, 2)
     else:
-        if sell_ob:
-            entry = round(sell_ob['price'] - 0.5, 2)
-        else:
-            entry = round(current, 2)
-        sl = round(entry + RISK, 2)
-        tp = round(entry - REWARD, 2)
-    
+        entry = round(current, 2)
+        sl = round(current + RISK, 2)
+        tp = round(current - REWARD, 2)
+
     signal = {
         'direction': direction,
         'entry': entry,
         'sl': sl,
         'tp': tp,
-        'score': score
     }
-    
+
     analysis = {
         'reasons': reasons,
-        'score': score,
-        'style': 'SMC'
+        'style': 'ICT'
     }
-    
+
     return signal, analysis
