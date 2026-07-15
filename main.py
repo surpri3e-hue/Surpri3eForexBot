@@ -1,9 +1,15 @@
 import os
 import logging
+import io
+import pandas as pd
+import numpy as np
+import matplotlib.pyplot as plt
+import mplfinance as mpf
 from telegram import (
     Update,
     InlineKeyboardButton,
-    InlineKeyboardMarkup
+    InlineKeyboardMarkup,
+    InputFile
 )
 from telegram.ext import (
     Application,
@@ -23,8 +29,7 @@ from database import (
     save_trade,
     update_result,
     get_user_trades,
-    get_statistics,
-    get_open_trades
+    get_statistics
 )
 
 from users import (
@@ -35,7 +40,7 @@ from users import (
     get_all_users
 )
 
-from settings import init_settings, get_settings
+from settings import init_settings, get_settings, save_settings
 from report import create_report
 
 from admin_tools import (
@@ -58,10 +63,27 @@ ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
 
+# ============ کیبورد انتخاب تایم‌فریم ============
+def timeframe_keyboard():
+    keyboard = [
+        [
+            InlineKeyboardButton("1 دقیقه", callback_data="tf_1min"),
+            InlineKeyboardButton("5 دقیقه", callback_data="tf_5min"),
+            InlineKeyboardButton("15 دقیقه", callback_data="tf_15min")
+        ],
+        [
+            InlineKeyboardButton("1 ساعت", callback_data="tf_1h"),
+            InlineKeyboardButton("4 ساعت", callback_data="tf_4h"),
+            InlineKeyboardButton("1 روز", callback_data="tf_1d")
+        ],
+        [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
 # ============ کیبورد کاربر ============
 def user_keyboard():
     keyboard = [
-        [InlineKeyboardButton("🚨 دریافت سیگنال", callback_data="signal")],
+        [InlineKeyboardButton("🚨 دریافت سیگنال", callback_data="signal_menu")],
         [
             InlineKeyboardButton("📊 عملکرد", callback_data="performance"),
             InlineKeyboardButton("📜 تاریخچه", callback_data="history")
@@ -98,23 +120,88 @@ def signal_result_keyboard(trade_id):
     ]
     return InlineKeyboardMarkup(keyboard)
 
-# ============ ارسال سیگنال ============
-async def send_signal(target, trade_id, signal, df):
+# ============ تابع تولید چارت ============
+def generate_chart(df, signal, timeframe):
+    """ایجاد چارت با سیگنال"""
+    try:
+        df_copy = df.copy()
+        df_copy.index = pd.DatetimeIndex(df_copy.index)
+        
+        fig, axes = mpf.plot(
+            df_copy,
+            type='candle',
+            style='charles',
+            volume=True,
+            figsize=(12, 8),
+            returnfig=True,
+            warn_too_much_data=1000
+        )
+        
+        ax = axes[0]
+        entry = signal['entry']
+        sl = signal['sl']
+        tp = signal['tp']
+        
+        ax.axhline(y=entry, color='blue', linestyle='--', linewidth=1.5, label='Entry')
+        ax.axhline(y=sl, color='red', linestyle='--', linewidth=1.5, label='SL')
+        ax.axhline(y=tp, color='green', linestyle='--', linewidth=1.5, label='TP')
+        ax.legend()
+        
+        buf = io.BytesIO()
+        plt.savefig(buf, format='png', dpi=100, bbox_inches='tight')
+        buf.seek(0)
+        plt.close()
+        
+        return buf
+        
+    except Exception as e:
+        logging.error(f"Chart error: {e}")
+        return None
+
+# ============ محاسبه Risk/Reward ============
+def calculate_rr(signal):
+    try:
+        entry = signal['entry']
+        sl = signal['sl']
+        tp = signal['tp']
+        risk = abs(entry - sl)
+        reward = abs(tp - entry)
+        return round(reward / risk, 2) if risk > 0 else 0
+    except:
+        return 0
+
+# ============ تابع ارسال سیگنال با چارت ============
+async def send_signal_with_chart(target, trade_id, signal, df, timeframe):
+    rr = calculate_rr(signal)
+    
     message = (
         f"🚨 **سیگنال جدید**\n\n"
-        f"💰 **قیمت طلا:** {df['close'].iloc[-1]:.2f}\n\n"
-        f"📈 **جهت:** {signal['direction']}\n"
+        f"⏱️ **تایم‌فریم:** {timeframe}\n"
+        f"💰 **قیمت فعلی:** {df['close'].iloc[-1]:.2f}\n\n"
+        f"📈 **جهت:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}\n"
         f"📍 **ورود:** {signal['entry']:.2f}\n"
-        f"🛑 **حد ضرر:** {signal['sl']:.2f}\n"
-        f"🎯 **حد سود:** {signal['tp']:.2f}\n"
-        f"⭐ **امتیاز:** {signal.get('score', 0)}\n\n"
+        f"🛑 **حد ضرر (SL):** {signal['sl']:.2f}\n"
+        f"🎯 **حد سود (TP):** {signal['tp']:.2f}\n"
+        f"⭐ **امتیاز:** {signal.get('score', 0)}\n"
+        f"📊 **ریسک به ریوارد:** 1:{rr}\n\n"
         f"👇 نتیجه معامله را انتخاب کنید:"
     )
-    await target.reply_text(
-        message,
-        reply_markup=signal_result_keyboard(trade_id),
-        parse_mode='Markdown'
-    )
+    
+    chart_buf = generate_chart(df, signal, timeframe)
+    
+    if chart_buf:
+        await target.reply_photo(
+            photo=InputFile(chart_buf, filename="chart.png"),
+            caption=message,
+            reply_markup=signal_result_keyboard(trade_id),
+            parse_mode='Markdown'
+        )
+    else:
+        await target.reply_text(
+            message,
+            reply_markup=signal_result_keyboard(trade_id),
+            parse_mode='Markdown'
+        )
 
 # ============ دستور /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -126,8 +213,8 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "🤖 **Surpri3e AI Scanner**\n\n"
         "به ربات سیگنال‌دهی طلا خوش آمدید!\n\n"
         "🔹 برای دریافت سیگنال روی دکمه 🚨 کلیک کنید\n"
-        "🔹 آمار عملکرد خود را در 📊 ببینید\n"
-        "🔹 تاریخچه معاملات در 📜 موجود است\n\n"
+        "🔹 تایم‌فریم مورد نظر را انتخاب کنید\n"
+        "🔹 آمار عملکرد خود را در 📊 ببینید\n\n"
         "موفق باشید! 🍀"
     )
     
@@ -159,17 +246,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data.startswith("tp_"):
         trade_id = data.split("_")[1]
         update_result(trade_id, "TP")
-        await query.edit_message_text("✅ **TP ثبت شد**", parse_mode='Markdown')
+        
+        # ✅ بروزرسانی پیام با کیبورد کاربر
+        await query.edit_message_text(
+            "✅ **TP ثبت شد**\n\nبرای ادامه از دکمه‌های زیر استفاده کنید:",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data.startswith("sl_"):
         trade_id = data.split("_")[1]
         update_result(trade_id, "SL")
-        await query.edit_message_text("❌ **SL ثبت شد**", parse_mode='Markdown')
+        
+        # ✅ بروزرسانی پیام با کیبورد کاربر
+        await query.edit_message_text(
+            "❌ **SL ثبت شد**\n\nبرای ادامه از دکمه‌های زیر استفاده کنید:",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data.startswith("cancel_"):
-        await query.edit_message_text("🚫 **سیگنال لغو شد**", parse_mode='Markdown')
+        # ✅ بروزرسانی پیام با کیبورد کاربر
+        await query.edit_message_text(
+            "🚫 **سیگنال لغو شد**\n\nبرای ادامه از دکمه‌های زیر استفاده کنید:",
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     # -------- دکمه برگشت --------
@@ -181,14 +285,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # -------- دکمه‌های کاربر --------
-    if data == "signal":
-        await query.edit_message_text("🔍 **در حال تحلیل طلا...**", parse_mode='Markdown')
+    # -------- منوی انتخاب تایم‌فریم --------
+    if data == "signal_menu":
+        await query.edit_message_text(
+            "⏱️ **انتخاب تایم‌فریم:**\n\n"
+            "لطفاً تایم‌فریم مورد نظر را انتخاب کنید:",
+            reply_markup=timeframe_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    # -------- انتخاب تایم‌فریم --------
+    if data.startswith("tf_"):
+        timeframe_map = {
+            "tf_1min": "1min",
+            "tf_5min": "5min",
+            "tf_15min": "15min",
+            "tf_1h": "1h",
+            "tf_4h": "4h",
+            "tf_1d": "1d"
+        }
+        
+        timeframe = timeframe_map.get(data, "5min")
+        display_timeframe = data.replace("tf_", "")
+        
+        await query.edit_message_text(
+            f"🔍 **در حال تحلیل طلا ({display_timeframe})...**",
+            parse_mode='Markdown'
+        )
         
         try:
-            df = get_gold_candles("5min")
+            df = get_gold_candles(timeframe)
             if df is None or df.empty:
-                await query.message.reply_text("❌ **خطا در دریافت داده**", parse_mode='Markdown')
+                await query.message.reply_text(
+                    "❌ **خطا در دریافت داده**",
+                    parse_mode='Markdown'
+                )
                 return
             
             analysis = ict_analysis(df)
@@ -196,14 +328,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             
             if signal:
                 trade_id = save_trade(signal)
-                await send_signal(query.message, trade_id, signal, df)
+                await send_signal_with_chart(
+                    query.message,
+                    trade_id,
+                    signal,
+                    df,
+                    display_timeframe
+                )
             else:
-                await query.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
+                await query.message.reply_text(
+                    "❌ **سیگنالی پیدا نشد**",
+                    parse_mode='Markdown'
+                )
         except Exception as e:
             logging.error(f"Signal error: {e}")
-            await query.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
+            await query.message.reply_text(
+                f"❌ **خطا:** {str(e)}",
+                parse_mode='Markdown'
+            )
         return
 
+    # -------- دکمه‌های کاربر --------
     if data == "performance":
         stats = get_statistics()
         text = (
@@ -214,7 +359,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"🎯 **نرخ موفقیت:** {stats['winrate']}%\n"
             f"💰 **فاکتور سود:** {stats['profit_factor']}\n"
         )
-        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "history":
@@ -226,7 +375,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 result = trade.get('result', 'در انتظار')
                 emoji = "✅" if result == "TP" else "❌" if result == "SL" else "⏳"
                 text += f"{i}. {trade['direction']} | ورود: {trade['entry']} | {emoji} {result}\n"
-            await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
+            await query.edit_message_text(
+                text,
+                reply_markup=user_keyboard(),
+                parse_mode='Markdown'
+            )
         else:
             await query.edit_message_text(
                 "📭 **هنوز معامله‌ای ندارید!**",
@@ -244,19 +397,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             "برای عضویت با ادمین تماس بگیرید:\n"
             "👤 @AmirHossein_Nik"
         )
-        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "settings":
         settings = get_settings()
         text = (
             "⚙️ **تنظیمات**\n\n"
-            f"🔹 **تایم‌فریم:** {settings.get('timeframe', '5min')}\n"
+            f"🔹 **تایم‌فریم پیش‌فرض:** {settings.get('default_timeframe', '5min')}\n"
             f"🔹 **هشدار:** {'فعال' if settings.get('alert', True) else 'غیرفعال'}\n"
-            f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n\n"
+            f"🔹 **وضعیت:** {'🟢 آنلاین' if settings.get('status', True) else '🔴 آفلاین'}\n"
+            f"🔹 **ارسال چارت:** {'فعال' if settings.get('send_chart', True) else 'غیرفعال'}\n\n"
             "تنظیمات بیشتر به زودی اضافه میشه!"
         )
-        await query.edit_message_text(text, reply_markup=user_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=user_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     # -------- پنل ادمین --------
@@ -277,7 +439,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = f"👥 **کاربران**\n\n**کل کاربران:** {len(users)}\n\n"
         for user in users[:20]:
             text += f"🆔 {user['id']} | فعال: {user['last_active']}\n"
-        await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "analytics":
@@ -293,7 +459,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"💰 **فاکتور سود:** {stats['profit_factor']}\n"
             f"📈 **سود کل:** {stats.get('total_profit', 0)}\n"
         )
-        await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        await query.edit_message_text(
+            text,
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
         return
 
     if data == "signal_control":
@@ -342,56 +512,36 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     update_activity(user_id)
-    text = update.message.text.upper()
-
-    if text.startswith("SIGNAL") or text == "سیگنال":
-        await update.message.reply_text("🔍 **در حال تحلیل...**", parse_mode='Markdown')
-        
-        try:
-            df = get_gold_candles("5min")
-            if df is None or df.empty:
-                await update.message.reply_text("❌ **خطا در دریافت داده**", parse_mode='Markdown')
-                return
-            
-            analysis = ict_analysis(df)
-            signal = create_signal(df, analysis)
-            
-            if signal:
-                trade_id = save_trade(signal)
-                await send_signal(update.message, trade_id, signal, df)
-            else:
-                await update.message.reply_text("❌ **سیگنالی پیدا نشد**", parse_mode='Markdown')
-        except Exception as e:
-            logging.error(f"Handler error: {e}")
-            await update.message.reply_text(f"❌ **خطا:** {str(e)}", parse_mode='Markdown')
+    
+    await update.message.reply_text(
+        "❌ **لطفاً از دکمه‌ها استفاده کنید!**\n\n"
+        "برای دریافت سیگنال، روی دکمه 🚨 کلیک کنید.",
+        parse_mode='Markdown'
+    )
 
 # ============ اجرای اصلی ============
 def main():
     try:
-        # مقداردهی اولیه
         init_settings()
         create_database()
         create_users_table()
         
-        # ساخت اپلیکیشن
         app = Application.builder().token(TOKEN).build()
         
-        # اضافه کردن هندلرها
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("admin", admin))
         app.add_handler(CallbackQueryHandler(button))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
         
         logging.info("🤖 Surpri3e AI Bot Started")
-        print("🤖 Surpri3e AI Bot Started")
+        print("✅ Surpri3e AI Bot Started")
         
-        # اجرا با Polling (ساده‌ترین روش)
         port = int(os.environ.get("PORT", 8080))
         print(f"🔄 Running on port {port}")
         app.run_polling()
         
     except Exception as e:
-        logging.error(f"Main error: {e}")
+        logging.error(f"❌ Main Error: {e}")
         print(f"❌ Error: {e}")
         raise
 
