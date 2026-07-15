@@ -7,6 +7,7 @@ LANGUAGES = {
         'select_style': '📊 **سبک معاملاتی خود را انتخاب کنید:**',
         'select_timeframe': '⏱️ **تایم‌فریم را انتخاب کنید:**',
         'select_rr': '🎯 **نسبت ریسک به ریوارد (RR) را انتخاب کنید:**',
+        'change_lang': '🌍 تغییر زبان',
         
         # ===== دکمه‌های تایم‌فریم =====
         'tf_1min': '1 دقیقه',
@@ -104,6 +105,7 @@ LANGUAGES = {
         'select_style': '📊 **Select your trading style:**',
         'select_timeframe': '⏱️ **Select timeframe:**',
         'select_rr': '🎯 **Select Risk/Reward Ratio (RR):**',
+        'change_lang': '🌍 Change Language',
         
         # ===== دکمه‌های تایم‌فریم =====
         'tf_1min': '1 min',
@@ -201,6 +203,7 @@ LANGUAGES = {
         'select_style': '📊 **Выберите стиль торговли:**',
         'select_timeframe': '⏱️ **Выберите таймфрейм:**',
         'select_rr': '🎯 **Выберите соотношение Риск/Прибыль (RR):**',
+        'change_lang': '🌍 Сменить язык',
         
         # ===== دکمه‌های تایم‌فریم =====
         'tf_1min': '1 минута',
@@ -298,6 +301,7 @@ LANGUAGES = {
         'select_style': '📊 **اختر نمط التداول الخاص بك:**',
         'select_timeframe': '⏱️ **اختر الإطار الزمني:**',
         'select_rr': '🎯 **اختر نسبة المخاطرة/المكافأة (RR):**',
+        'change_lang': '🌍 تغيير اللغة',
         
         # ===== دکمه‌های تایم‌فریم =====
         'tf_1min': 'دقيقة 1',
