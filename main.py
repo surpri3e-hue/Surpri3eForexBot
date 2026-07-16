@@ -294,7 +294,8 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
 👇 {get_text(lang, 'result_label')}:
 """
 
-    await target.reply_text(
+    # ===== تغییر به chat.send_message برای جلوگیری از خطا هنگام حذف پیام قبلی =====
+    await target.chat.send_message(
         message,
         reply_markup=signal_result_keyboard(trade_id, lang),
         parse_mode='Markdown'
@@ -410,7 +411,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rr = int(data.replace("rr_", ""))
         rr = max(1, min(10, rr))
 
-        set_user_rr(user_id, rr)  # ✅ per-user، نه سراسری
+        set_user_rr(user_id, rr)
         context.user_data['rr'] = rr
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
@@ -427,7 +428,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # ===== چک cooldown بر اساس تایم‌فریم =====
-        # جلوگیری از درخواست‌های پشت‌سرهم روی کندلی که هنوز نبسته
         allowed, seconds_left = check_signal_cooldown(user_id, timeframe)
         if not allowed:
             minutes = seconds_left // 60
@@ -446,53 +446,42 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            # ===== مرحله‌ی واقعی: دریافت دیتا از Twelve Data =====
+            # دریافت دیتا از API
             df = get_gold_candles(timeframe)
 
             if df is not None and not df.empty:
-                # ===== مرحله‌ی واقعی: تحلیل ICT/SMC + لایه‌ی ZigZag =====
+                # تحلیل استراتژی
                 signal, analysis = create_signal(df, style)
 
-                # ===== نمایش پیام لودینگ متحرک طی ۳۰ ثانیه =====
-                # دیتا و تحلیل بالا واقعاً و یک‌بار انجام شده؛ این مرحله فقط
-                # زمان نمایش نتیجه به کاربر رو با انیمیشن لودینگ پر می‌کنه
-                # تا حس یک بررسی کامل منتقل بشه، بدون درخواست تکراری به API.
-                loading_frames = [
-                    get_text(lang, 'loading_frame_1'),
-                    get_text(lang, 'loading_frame_2'),
-                    get_text(lang, 'loading_frame_3'),
-                    get_text(lang, 'loading_frame_4'),
-                ]
-                total_seconds = 30
-                step = 3  # هر ۳ ثانیه پیام آپدیت بشه (۱۰ آپدیت در ۳۰ ثانیه)
-                elapsed = 0
-                frame_index = 0
-                while elapsed < total_seconds:
-                    try:
-                        await query.edit_message_text(
-                            loading_frames[frame_index % len(loading_frames)],
-                            parse_mode='Markdown'
-                        )
-                    except Exception:
-                        pass  # اگه پیام تغییری نداشت یا rate limit خورد، نادیده بگیر و ادامه بده
-                    await asyncio.sleep(step)
-                    elapsed += step
-                    frame_index += 1
+                # ==========================================
+                # 🔥 فقط ۵ ثانیه توقف به صورت آسنکرون
+                # ==========================================
+                await asyncio.sleep(5)
+
+                # پاک کردن پیام "در حال بررسی"
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
 
                 if signal:
                     strength = signal.get('strength', 'NORMAL')
                     trade_id = save_trade(signal, user_id, style, strength)
                     use_signal(user_id)
-                    record_signal_time(user_id, timeframe)  # ثبت زمان برای cooldown بعدی
+                    record_signal_time(user_id, timeframe)
+                    
+                    # ارسال سیگنال
                     await send_signal(query.message, trade_id, signal, analysis, df, timeframe, user_id, lang)
                 else:
-                    await query.message.reply_text(
-                        get_text(lang, 'no_signal'),
+                    # پیام سیگنال یافت نشد
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=get_text(lang, 'no_signal'),
                         reply_markup=user_keyboard(lang),
                         parse_mode='Markdown'
                     )
             else:
-                await query.message.reply_text(
+                await query.message.edit_text(
                     get_text(lang, 'error'),
                     reply_markup=user_keyboard(lang),
                     parse_mode='Markdown'
@@ -500,8 +489,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.exception(f"خطا در تولید سیگنال برای کاربر {user_id}")
-            await query.message.reply_text(
-                f"❌ {get_text(lang, 'error')}: {str(e)}",
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ {get_text(lang, 'error')}: {str(e)}",
                 reply_markup=user_keyboard(lang),
                 parse_mode='Markdown'
             )
