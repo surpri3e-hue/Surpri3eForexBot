@@ -95,22 +95,20 @@ def language_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب سبک ============
-def style_keyboard(lang='fa'):
+# ============ کیبورد انتخاب حالت معاملاتی (Surpri3e Strategy) ============
+def mode_keyboard(lang='fa'):
     keyboard = [
-        [InlineKeyboardButton("📊 ICT", callback_data="style_ict")],
-        [InlineKeyboardButton("💰 Smart Money (SMC)", callback_data="style_smc")],
-        [InlineKeyboardButton("🌀 Surpri3e Strategy", callback_data="style_surpri3e")],
+        [InlineKeyboardButton("⚡ Fast Scalp (1min)", callback_data="mode_fast_scalp")],
+        [InlineKeyboardButton("📈 Standard Mode", callback_data="mode_standard")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب تایم‌فریم ============
-def timeframe_keyboard(lang='fa'):
+# ============ کیبورد تایم‌فریم برای Standard Mode (بدون 1min) ============
+def timeframe_keyboard_standard(lang='fa'):
     keyboard = [
         [
-            InlineKeyboardButton(get_text(lang, 'tf_1min'), callback_data="tf_1min"),
             InlineKeyboardButton(get_text(lang, 'tf_5min'), callback_data="tf_5min"),
             InlineKeyboardButton(get_text(lang, 'tf_15min'), callback_data="tf_15min")
         ],
@@ -122,6 +120,7 @@ def timeframe_keyboard(lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
+
 
 
 # ============ کیبورد انتخاب RR (۱ تا ۱۰) ============
@@ -294,8 +293,7 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
 👇 {get_text(lang, 'result_label')}:
 """
 
-    # ===== تغییر به chat.send_message برای جلوگیری از خطا هنگام حذف پیام قبلی =====
-    await target.chat.send_message(
+    await target.reply_text(
         message,
         reply_markup=signal_result_keyboard(trade_id, lang),
         parse_mode='Markdown'
@@ -358,9 +356,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['lang'] = lang
         add_user(user_id, lang=lang)
 
+        # سبک همیشه Surpri3e Strategy است - فقط باید حالت (Fast Scalp/Standard) انتخاب بشه
+        context.user_data['style'] = 'SURPRI3E'
+        conn = connect()
+        cursor = conn.cursor()
+        cursor.execute("UPDATE users SET style=? WHERE id=?", ('SURPRI3E', user_id))
+        conn.commit()
+        conn.close()
+
         await query.edit_message_text(
-            get_text(lang, 'select_style'),
-            reply_markup=style_keyboard(lang),
+            get_text(lang, 'select_mode'),
+            reply_markup=mode_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -374,26 +380,32 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب سبک =====
-    if data.startswith("style_"):
-        style = data.replace("style_", "").upper()
-        context.user_data['style'] = style
-
-        conn = connect()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET style=? WHERE id=?", (style, user_id))
-        conn.commit()
-        conn.close()
+    # ===== انتخاب حالت (Fast Scalp / Standard Mode) =====
+    if data == "mode_fast_scalp":
+        # Fast Scalp فقط روی تایم‌فریم 1 دقیقه کار می‌کنه - نیازی به انتخاب تایم‌فریم نیست
+        context.user_data['timeframe'] = '1min'
+        context.user_data['mode'] = 'fast_scalp'
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'select_timeframe'),
-            reply_markup=timeframe_keyboard(lang),
+            get_text(lang, 'select_rr'),
+            reply_markup=rr_keyboard(lang),
             parse_mode='Markdown'
         )
         return
 
-    # ===== انتخاب تایم‌فریم =====
+    if data == "mode_standard":
+        context.user_data['mode'] = 'standard'
+
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        await query.edit_message_text(
+            get_text(lang, 'select_timeframe'),
+            reply_markup=timeframe_keyboard_standard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== انتخاب تایم‌فریم (فقط برای Standard Mode) =====
     if data.startswith("tf_"):
         timeframe = data.replace("tf_", "")
         context.user_data['timeframe'] = timeframe
@@ -411,7 +423,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         rr = int(data.replace("rr_", ""))
         rr = max(1, min(10, rr))
 
-        set_user_rr(user_id, rr)
+        set_user_rr(user_id, rr)  # ✅ per-user، نه سراسری
         context.user_data['rr'] = rr
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
@@ -428,6 +440,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
         # ===== چک cooldown بر اساس تایم‌فریم =====
+        # جلوگیری از درخواست‌های پشت‌سرهم روی کندلی که هنوز نبسته
         allowed, seconds_left = check_signal_cooldown(user_id, timeframe)
         if not allowed:
             minutes = seconds_left // 60
@@ -446,42 +459,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
         try:
-            # دریافت دیتا از API
-            df = get_gold_candles(timeframe)
+            # ===== حلقه‌ی تلاش مجدد واقعی =====
+            # به‌جای یک بار گرفتن دیتا و تسلیم شدن، ربات چند بار (با فاصله)
+            # دوباره از API دیتای تازه می‌گیره و دوباره تحلیل می‌کنه، تا وقتی
+            # یا سیگنال معتبر پیدا بشه یا به سقف زمانی برسه. هر تلاش، تحلیل
+            # واقعیه - نه صرفاً تاخیر مصنوعی.
+            loading_frames = [
+                get_text(lang, 'loading_frame_1'),
+                get_text(lang, 'loading_frame_2'),
+                get_text(lang, 'loading_frame_3'),
+                get_text(lang, 'loading_frame_4'),
+            ]
+
+            MAX_WAIT_SECONDS = 90   # سقف زمانی که کاربر منتظر می‌مونه
+            RETRY_INTERVAL = 4      # فاصله‌ی بین هر تلاش تحلیل
+
+            signal, analysis, df = None, None, None
+            elapsed = 0
+            frame_index = 0
+
+            while elapsed < MAX_WAIT_SECONDS:
+                df = get_gold_candles(timeframe)
+
+                if df is not None and not df.empty:
+                    signal, analysis = create_signal(df, style)
+                    if signal:
+                        break  # سیگنال معتبر پیدا شد - از حلقه خارج شو
+
+                try:
+                    await query.edit_message_text(
+                        loading_frames[frame_index % len(loading_frames)],
+                        parse_mode='Markdown'
+                    )
+                except Exception:
+                    pass  # rate limit یا پیام بدون تغییر - نادیده بگیر و ادامه بده
+
+                await asyncio.sleep(RETRY_INTERVAL)
+                elapsed += RETRY_INTERVAL
+                frame_index += 1
 
             if df is not None and not df.empty:
-                # تحلیل استراتژی
-                signal, analysis = create_signal(df, style)
-
-                # ==========================================
-                # 🔥 فقط ۵ ثانیه توقف به صورت آسنکرون
-                # ==========================================
-                await asyncio.sleep(5)
-
-                # پاک کردن پیام "در حال بررسی"
-                try:
-                    await query.message.delete()
-                except Exception:
-                    pass
-
                 if signal:
                     strength = signal.get('strength', 'NORMAL')
                     trade_id = save_trade(signal, user_id, style, strength)
                     use_signal(user_id)
-                    record_signal_time(user_id, timeframe)
-                    
-                    # ارسال سیگنال
+                    record_signal_time(user_id, timeframe)  # ثبت زمان برای cooldown بعدی
                     await send_signal(query.message, trade_id, signal, analysis, df, timeframe, user_id, lang)
                 else:
-                    # پیام سیگنال یافت نشد
-                    await context.bot.send_message(
-                        chat_id=user_id,
-                        text=get_text(lang, 'no_signal'),
+                    await query.message.reply_text(
+                        get_text(lang, 'no_signal'),
                         reply_markup=user_keyboard(lang),
                         parse_mode='Markdown'
                     )
             else:
-                await query.message.edit_text(
+                await query.message.reply_text(
                     get_text(lang, 'error'),
                     reply_markup=user_keyboard(lang),
                     parse_mode='Markdown'
@@ -489,13 +520,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         except Exception as e:
             logger.exception(f"خطا در تولید سیگنال برای کاربر {user_id}")
-            try:
-                await query.message.delete()
-            except Exception:
-                pass
-            await context.bot.send_message(
-                chat_id=user_id,
-                text=f"❌ {get_text(lang, 'error')}: {str(e)}",
+            await query.message.reply_text(
+                f"❌ {get_text(lang, 'error')}: {str(e)}",
                 reply_markup=user_keyboard(lang),
                 parse_mode='Markdown'
             )
@@ -612,32 +638,60 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "signal_menu":
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'select_style'),
-            reply_markup=style_keyboard(lang),
+            get_text(lang, 'select_mode'),
+            reply_markup=mode_keyboard(lang),
             parse_mode='Markdown'
         )
         return
 
     # ===== عملکرد =====
     if data == "performance":
-        stats = get_user_winrate_stats(user_id)
         signals_left = get_user_signals_left(user_id)
         lang = context.user_data.get('lang') or get_user_lang(user_id)
+        keyboard = [
+            [
+                InlineKeyboardButton(get_text(lang, 'weekly_btn'), callback_data="perf_weekly"),
+                InlineKeyboardButton(get_text(lang, 'monthly_btn'), callback_data="perf_monthly")
+            ],
+            [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
+        ]
         await query.edit_message_text(
-            get_text(lang, 'performance_text').format(
-                total=stats['all_time']['total'],
-                wins=stats['all_time']['wins'],
-                losses=stats['all_time']['losses'],
-                winrate=stats['all_time']['winrate'],
-                weekly_total=stats['weekly']['total'],
-                weekly_wins=stats['weekly']['wins'],
-                weekly_winrate=stats['weekly']['winrate'],
-                monthly_total=stats['monthly']['total'],
-                monthly_wins=stats['monthly']['wins'],
-                monthly_winrate=stats['monthly']['winrate'],
-                left=signals_left
+            get_text(lang, 'performance_menu_text').format(left=signals_left),
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== عملکرد هفتگی =====
+    if data == "perf_weekly":
+        stats = get_user_winrate_stats(user_id)
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        w = stats['weekly']
+        back_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="performance")]
+        ])
+        await query.edit_message_text(
+            get_text(lang, 'weekly_performance_text').format(
+                total=w['total'], wins=w['wins'], losses=w['losses'], winrate=w['winrate']
             ),
-            reply_markup=user_keyboard(lang),
+            reply_markup=back_keyboard,
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== عملکرد ماهانه =====
+    if data == "perf_monthly":
+        stats = get_user_winrate_stats(user_id)
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        m = stats['monthly']
+        back_keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="performance")]
+        ])
+        await query.edit_message_text(
+            get_text(lang, 'monthly_performance_text').format(
+                total=m['total'], wins=m['wins'], losses=m['losses'], winrate=m['winrate']
+            ),
+            reply_markup=back_keyboard,
             parse_mode='Markdown'
         )
         return
