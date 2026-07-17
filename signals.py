@@ -1,32 +1,36 @@
 # ============================================================
 # 📁 signals.py
-# 📌 وظیفه: دریافت سیگنال از Surpri3e Strategy
-# 📅 بازنویسی: 2026-07-16 - حذف وابستگی به ict_logic/smc_logic
-#                            (این دو دیگر از دکمه‌های ربات صدا زده
-#                            نمی‌شوند و وابستگی‌شان به کتابخونه‌ی ta
-#                            باعث کرش روی Railway می‌شد)
+# 📌 وظیفه: دریافت سیگنال از استراتژی انتخاب‌شده، از طریق registry
+# 📅 بازنویسی: 2026-07-17 - معماری plugin-محور
+#
+# دیگه به‌طور مستقیم به فایل استراتژی خاصی (مثل zigzag_logic) وابسته
+# نیست؛ از strategy_registry می‌خواد که استراتژی رو با شناسه‌اش پیدا
+# و اجرا کنه. افزودن استراتژی جدید فقط نیاز به ساخت فایل در پوشه‌ی
+# strategies/ داره، بدون تغییر این فایل.
 # ============================================================
 
-from zigzag_logic import analyze_surpri3e_strategy
+from strategy_registry import run_strategy
 
 
-def create_signal(df, style='SURPRI3E'):
+def create_signal(df, style='surpri3e'):
     """
-    دریافت سیگنال بر اساس Surpri3e Strategy (مبتنی بر ZigZag).
+    دریافت سیگنال بر اساس استراتژی انتخابی.
 
     پارامترها:
         df (DataFrame): دیتای کندلی قیمت طلا
-        style (str): در حال حاضر فقط 'SURPRI3E' پشتیبانی می‌شود
+        style (str): شناسه‌ی استراتژی (مثلاً 'surpri3e')
 
     خروجی:
         signal (dict): شامل direction, entry, sl, tp, strength
         analysis (dict): شامل reasons, style, score, strength
-        در صورت نبود ستاپ معتبر: (None, None)
+        در صورت نبود ستاپ معتبر یا نبود استراتژی: (None, None)
     """
     if df is None or len(df) < 30:
         return None, None
 
-    if style == 'SURPRI3E':
-        return analyze_surpri3e_strategy(df)
-    else:
-        return None, None
+    # سازگاری با مقادیر قدیمی که ممکنه هنوز تو دیتابیس کاربرها باشه
+    style_normalized = style.lower() if style else 'surpri3e'
+    if style_normalized in ('surpri3e', 'ict', 'smc'):
+        style_normalized = 'surpri3e'
+
+    return run_strategy(style_normalized, df)
