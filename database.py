@@ -43,7 +43,7 @@ def create_database():
         joined_at TEXT,
         last_active TEXT,
         lang TEXT DEFAULT 'fa',
-        style TEXT DEFAULT 'ICT',
+        style TEXT DEFAULT 'surpri3e',
         is_vip INTEGER DEFAULT 0,
         referral_count INTEGER DEFAULT 0,
         referred_by INTEGER DEFAULT 0,
@@ -66,6 +66,17 @@ def create_database():
     )
     """)
 
+    # ===== جدول تنظیمات استراتژی‌ها (پارامترهای هر استراتژی، مثل سخت‌گیری) =====
+    # کلید به‌صورت "strategy_id.param_name" ذخیره می‌شه، مثلاً "surpri3e.depth"
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS strategy_settings (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        setting_key TEXT UNIQUE,
+        setting_value TEXT,
+        updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # ===== migration برای دیتابیس‌های قدیمی‌تر که ستون‌های جدید رو ندارن =====
     if not _column_exists(cursor, "users", "rr_ratio"):
         cursor.execute("ALTER TABLE users ADD COLUMN rr_ratio REAL DEFAULT 2")
@@ -78,6 +89,11 @@ def create_database():
 
     if not _column_exists(cursor, "trades", "strength"):
         cursor.execute("ALTER TABLE trades ADD COLUMN strength TEXT DEFAULT 'NORMAL'")
+
+    # ===== migration: کاربرانی که از قبل با style قدیمی (ICT/SMC) ثبت شدن =====
+    # چون signals.py دیگه فقط SURPRI3E رو می‌شناسه، این کاربرا باید بروزرسانی بشن
+    # وگرنه create_signal همیشه None برمی‌گردونه (باگی که باعث "سیگنال نمی‌ده" می‌شد)
+    cursor.execute("UPDATE users SET style='surpri3e' WHERE style IS NULL OR style IN ('ICT', 'SMC')")
 
     # ===== تنظیمات پیش‌فرض =====
     default_settings = [
@@ -132,7 +148,67 @@ def get_all_settings():
     return {key: value for key, value in results}
 
 
+# ============ تنظیمات استراتژی‌ها (پارامترهای قابل تغییر هر استراتژی) ============
+def get_strategy_setting(strategy_id, param_name, default=None):
+    """
+    مقدار یک پارامتر مشخص از یک استراتژی رو می‌خونه.
+    اگه هنوز تو دیتابیس ذخیره نشده باشه، مقدار default (که معمولاً از
+    خود فایل استراتژی میاد) رو برمی‌گردونه.
+    """
+    key = f"{strategy_id}.{param_name}"
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT setting_value FROM strategy_settings WHERE setting_key=?", (key,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else default
+
+
+def set_strategy_setting(strategy_id, param_name, value):
+    """مقدار یک پارامتر استراتژی رو ذخیره/به‌روزرسانی می‌کنه."""
+    key = f"{strategy_id}.{param_name}"
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO strategy_settings (setting_key, setting_value) VALUES (?, ?) "
+        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value, updated_at=CURRENT_TIMESTAMP",
+        (key, str(value))
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_strategy_settings(strategy_id):
+    """همه‌ی پارامترهای ذخیره‌شده‌ی یک استراتژی رو برمی‌گردونه (dict: param_name -> value)."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT setting_key, setting_value FROM strategy_settings WHERE setting_key LIKE ?", (f"{strategy_id}.%",))
+    results = cursor.fetchall()
+    conn.close()
+    prefix_len = len(strategy_id) + 1
+    return {key[prefix_len:]: value for key, value in results}
+
+
+def reset_strategy_settings(strategy_id):
+    """همه‌ی پارامترهای ذخیره‌شده‌ی یک استراتژی رو پاک می‌کنه (برمی‌گرده به مقادیر پیش‌فرض کد)."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM strategy_settings WHERE setting_key LIKE ?", (f"{strategy_id}.%",))
+    conn.commit()
+    conn.close()
+
+
 # ============ کاربران ============
+def user_exists(user_id):
+    """چک می‌کنه کاربر قبلاً تو دیتابیس ثبت شده یا نه (برای تشخیص کاربر جدید/قدیمی در /start)."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT id FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result is not None
+
+
 def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa'):
     conn = connect()
     cursor = conn.cursor()
@@ -209,7 +285,8 @@ def get_user_style(user_id):
     cursor.execute("SELECT style FROM users WHERE id=?", (user_id,))
     result = cursor.fetchone()
     conn.close()
-    return result[0] if result else 'ICT'
+    # پیش‌فرض SURPRI3E است، نه ICT قدیمی که دیگر signals.py آن را نمی‌شناسد
+    return result[0] if result and result[0] else 'surpri3e'
 
 
 def is_user_vip(user_id):
