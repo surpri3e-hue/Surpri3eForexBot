@@ -128,11 +128,17 @@ def get_setting(key):
 
 
 def update_setting(key, value):
+    """
+    مقدار یک تنظیم رو ذخیره می‌کنه. اگه کلید از قبل وجود نداشته باشه
+    (مثلاً تنظیمات داینامیکی مثل نام سفارشی دکمه‌ها که تو لیست
+    default_settings اولیه نیستن)، به‌جای نادیده گرفتن، insert می‌کنه.
+    """
     conn = connect()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE bot_settings SET setting_value=?, updated_at=CURRENT_TIMESTAMP WHERE setting_key=?",
-        (value, key)
+        "INSERT INTO bot_settings (setting_key, setting_value) VALUES (?, ?) "
+        "ON CONFLICT(setting_key) DO UPDATE SET setting_value=excluded.setting_value, updated_at=CURRENT_TIMESTAMP",
+        (key, value)
     )
     conn.commit()
     conn.close()
@@ -194,6 +200,42 @@ def reset_strategy_settings(strategy_id):
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("DELETE FROM strategy_settings WHERE setting_key LIKE ?", (f"{strategy_id}.%",))
+    conn.commit()
+    conn.close()
+
+
+# ============ سفارشی‌سازی دکمه‌های شیشه‌ای (اسم/حذف) ============
+# از همون جدول bot_settings استفاده می‌کنیم، با پیشوند "btn_name_" و "btn_hidden_"
+def get_button_label(button_key, default_label):
+    """
+    اسم نمایشی یک دکمه رو برمی‌گردونه. اگه ادمین از پنل مدیریت اسمش رو
+    عوض کرده باشه، همون رو می‌ده؛ وگرنه اسم پیش‌فرض کد.
+    """
+    custom = get_setting(f"btn_name_{button_key}")
+    return custom if custom else default_label
+
+
+def set_button_label(button_key, new_label):
+    """اسم نمایشی یک دکمه رو تغییر می‌ده."""
+    update_setting(f"btn_name_{button_key}", new_label)
+
+
+def is_button_hidden(button_key):
+    """چک می‌کنه آیا ادمین این دکمه رو از پنل مدیریت مخفی/حذف کرده."""
+    return get_setting(f"btn_hidden_{button_key}") == "true"
+
+
+def set_button_hidden(button_key, hidden=True):
+    """یک دکمه رو مخفی یا نمایان می‌کنه."""
+    update_setting(f"btn_hidden_{button_key}", "true" if hidden else "false")
+
+
+def reset_button_customization(button_key):
+    """اسم و وضعیت مخفی‌بودن یک دکمه رو به پیش‌فرض برمی‌گردونه."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM bot_settings WHERE setting_key IN (?, ?)",
+                   (f"btn_name_{button_key}", f"btn_hidden_{button_key}"))
     conn.commit()
     conn.close()
 
@@ -546,6 +588,25 @@ def update_result(trade_id, result):
     cursor.execute("UPDATE trades SET result=? WHERE id=?", (result, trade_id))
     conn.commit()
     conn.close()
+
+
+def get_open_trades():
+    """
+    همه‌ی معاملاتی که هنوز نتیجه‌شون OPEN است رو برمی‌گردونه (برای چک خودکار TP/SL).
+    خروجی: لیست dict با فیلدهای id, user_id, direction, entry, sl, tp
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("""
+        SELECT id, user_id, direction, entry, sl, tp
+        FROM trades WHERE result='OPEN'
+    """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {'id': r[0], 'user_id': r[1], 'direction': r[2], 'entry': r[3], 'sl': r[4], 'tp': r[5]}
+        for r in rows
+    ]
 
 
 def get_user_trades(user_id=0):
