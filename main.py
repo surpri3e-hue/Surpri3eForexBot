@@ -17,7 +17,7 @@ from telegram.ext import (
     filters
 )
 
-from market import get_current_price, get_gold_candles, get_tehran_time
+from market import get_current_price, get_gold_candles, get_tehran_time, is_market_open
 from signals import create_signal
 from languages import get_text, LANGUAGES
 
@@ -147,27 +147,44 @@ def rr_keyboard(lang='fa'):
 
 
 # ============ کیبورد اصلی کاربر ============
+# ===== لیست دکمه‌های اصلی کاربر که از پنل ادمین قابل مدیریتن =====
+# هر ورودی: (button_key, callback_data, لیبل زبان پیش‌فرض)
+MANAGEABLE_USER_BUTTONS = [
+    ("signal_btn", "signal_menu", "signal_btn"),
+    ("performance_btn", "performance", "performance_btn"),
+    ("history_btn", "history", "history_btn"),
+    ("price_btn", "live_price", "price_btn"),
+    ("vip_btn", "vip", "vip_btn"),
+    ("referral_btn", "referral", "referral_btn"),
+    ("settings_btn", "settings", "settings_btn"),
+    ("support_btn", "support", "support_btn"),
+]
+
+
 def user_keyboard(lang='fa'):
-    keyboard = [
-        [InlineKeyboardButton(get_text(lang, 'signal_btn'), callback_data="signal_menu")],
-        [
-            InlineKeyboardButton(get_text(lang, 'performance_btn'), callback_data="performance"),
-            InlineKeyboardButton(get_text(lang, 'history_btn'), callback_data="history")
-        ],
-        [
-            InlineKeyboardButton(get_text(lang, 'price_btn'), callback_data="live_price"),
-            InlineKeyboardButton(get_text(lang, 'vip_btn'), callback_data="vip")
-        ],
-        [
-            InlineKeyboardButton(get_text(lang, 'referral_btn'), callback_data="referral"),
-            InlineKeyboardButton(get_text(lang, 'settings_btn'), callback_data="settings")
-        ],
-        [
-            InlineKeyboardButton(get_text(lang, 'support_btn'), callback_data="support"),
-            InlineKeyboardButton("🌍 " + get_text(lang, 'change_lang'), callback_data="change_lang")
-        ]
-    ]
-    return InlineKeyboardMarkup(keyboard)
+    from database import get_button_label, is_button_hidden
+
+    rows = []
+    # دو دکمه در هر ردیف، مگر دکمه‌ی سیگنال که تنهاست
+    visible_buttons = []
+    for button_key, callback, lang_key in MANAGEABLE_USER_BUTTONS:
+        if is_button_hidden(button_key):
+            continue
+        default_label = get_text(lang, lang_key)
+        label = get_button_label(button_key, default_label)
+        visible_buttons.append((label, callback))
+
+    # دکمه‌ی سیگنال (اولی) همیشه تنها تو یه ردیف، بقیه دوتا-دوتا
+    if visible_buttons:
+        rows.append([InlineKeyboardButton(visible_buttons[0][0], callback_data=visible_buttons[0][1])])
+        remaining = visible_buttons[1:]
+        for i in range(0, len(remaining), 2):
+            pair = remaining[i:i + 2]
+            rows.append([InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in pair])
+
+    rows.append([InlineKeyboardButton("🌍 " + get_text(lang, 'change_lang'), callback_data="change_lang")])
+
+    return InlineKeyboardMarkup(rows)
 
 
 # ============ کیبورد نتیجه سیگنال ============
@@ -216,6 +233,8 @@ def admin_keyboard():
         ],
         [InlineKeyboardButton("📊 Reports", callback_data="reports")],
         [InlineKeyboardButton("⚙️ مدیریت استراتژی‌ها", callback_data="manage_strategies")],
+        [InlineKeyboardButton("🔘 مدیریت دکمه‌ها", callback_data="manage_buttons")],
+        [InlineKeyboardButton("📉 بک‌تست استراتژی", callback_data="backtest_menu")],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -264,6 +283,78 @@ def strategy_params_keyboard(strategy_id):
         keyboard.append([InlineKeyboardButton("🔄 بازگشت به پیش‌فرض", callback_data=f"strat_reset_{strategy_id}")])
 
     keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="manage_strategies")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============ کیبورد مدیریت دکمه‌های شیشه‌ای (پنل ادمین) ============
+def button_management_keyboard(lang='fa'):
+    """لیست همه‌ی دکمه‌های قابل‌مدیریت رو با وضعیت فعلی‌شون (نمایان/مخفی) نشون می‌ده."""
+    from database import is_button_hidden, get_button_label
+
+    keyboard = []
+    for button_key, _, lang_key in MANAGEABLE_USER_BUTTONS:
+        default_label = get_text(lang, lang_key)
+        current_label = get_button_label(button_key, default_label)
+        status = "🚫 مخفی" if is_button_hidden(button_key) else "✅ نمایان"
+        keyboard.append([InlineKeyboardButton(f"{current_label} ({status})", callback_data=f"btn_manage_{button_key}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def button_edit_keyboard(button_key):
+    """گزینه‌های ویرایش یک دکمه‌ی خاص: تغییر اسم، مخفی/نمایان کردن، بازگشت به پیش‌فرض."""
+    from database import is_button_hidden
+
+    hidden = is_button_hidden(button_key)
+    toggle_label = "✅ نمایان کردن" if hidden else "🚫 مخفی کردن"
+
+    keyboard = [
+        [InlineKeyboardButton("✏️ تغییر اسم", callback_data=f"btn_rename_{button_key}")],
+        [InlineKeyboardButton(toggle_label, callback_data=f"btn_toggle_{button_key}")],
+        [InlineKeyboardButton("🔄 بازگشت به پیش‌فرض", callback_data=f"btn_reset_{button_key}")],
+        [InlineKeyboardButton("🔙 برگشت", callback_data="manage_buttons")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============ کیبوردهای بک‌تست (پنل ادمین) ============
+BACKTEST_MONTH_NAMES = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+}
+
+
+def backtest_strategy_keyboard():
+    """انتخاب استراتژی برای بک‌تست."""
+    from strategy_registry import get_all_strategies
+    strategies = get_all_strategies()
+
+    keyboard = []
+    for strategy_id, module in strategies.items():
+        name = module.STRATEGY_INFO.get("display_name", strategy_id)
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"bt_strat_{strategy_id}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def backtest_month_keyboard(strategy_id, which, year):
+    """
+    انتخاب ماه شروع یا پایان بک‌تست.
+    which: 'start' یا 'end'
+    """
+    keyboard = []
+    row = []
+    for month_num, name in BACKTEST_MONTH_NAMES.items():
+        row.append(InlineKeyboardButton(f"{name} {year}", callback_data=f"bt_{which}_{strategy_id}_{year}_{month_num:02d}"))
+        if len(row) == 3:
+            keyboard.append(row)
+            row = []
+    if row:
+        keyboard.append(row)
+
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -477,6 +568,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if signals_left <= 0:
             await query.edit_message_text(
                 get_text(lang, 'no_signals_left'),
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
+
+        # ===== چک بسته بودن بازار (آخر هفته) =====
+        if not is_market_open():
+            await query.edit_message_text(
+                get_text(lang, 'market_closed'),
                 reply_markup=user_keyboard(lang),
                 parse_mode='Markdown'
             )
@@ -1037,6 +1137,139 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== مدیریت دکمه‌های شیشه‌ای =====
+    if data == "manage_buttons":
+        if user_id != ADMIN_ID:
+            return
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        await query.edit_message_text(
+            "🔘 **مدیریت دکمه‌های شیشه‌ای**\n\nیک دکمه را برای تغییر اسم یا مخفی/نمایان کردنش انتخاب کنید:",
+            reply_markup=button_management_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("btn_manage_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("btn_manage_", "")
+        await query.edit_message_text(
+            f"🔘 **مدیریت دکمه: {button_key}**\n\nچه کاری می‌خواهید انجام دهید؟",
+            reply_markup=button_edit_keyboard(button_key),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("btn_rename_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("btn_rename_", "")
+        await query.edit_message_text(
+            f"✏️ **تغییر اسم دکمه**\n\nاسم جدید دکمه‌ی `{button_key}` را وارد کنید:",
+            reply_markup=button_edit_keyboard(button_key),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'rename_button'
+        context.user_data['rename_button_key'] = button_key
+        return
+
+    if data.startswith("btn_toggle_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("btn_toggle_", "")
+        from database import is_button_hidden, set_button_hidden
+        currently_hidden = is_button_hidden(button_key)
+        set_button_hidden(button_key, not currently_hidden)
+        await query.edit_message_text(
+            f"✅ **وضعیت دکمه تغییر کرد.**",
+            reply_markup=button_edit_keyboard(button_key),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("btn_reset_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("btn_reset_", "")
+        from database import reset_button_customization
+        reset_button_customization(button_key)
+        await query.edit_message_text(
+            "🔄 **دکمه به حالت پیش‌فرض بازگشت.**",
+            reply_markup=button_edit_keyboard(button_key),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== بک‌تست =====
+    if data == "backtest_menu":
+        if user_id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            "📉 **بک‌تست استراتژی**\n\nابتدا استراتژی مورد نظر را انتخاب کنید:",
+            reply_markup=backtest_strategy_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("bt_strat_"):
+        if user_id != ADMIN_ID:
+            return
+        strategy_id = data.replace("bt_strat_", "")
+        from datetime import datetime
+        current_year = datetime.now().year
+        context.user_data['backtest_strategy_id'] = strategy_id
+        await query.edit_message_text(
+            "📅 **ماه شروع بک‌تست را انتخاب کنید:**",
+            reply_markup=backtest_month_keyboard(strategy_id, "start", current_year),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("bt_start_"):
+        if user_id != ADMIN_ID:
+            return
+        # فرمت: bt_start_{strategy_id}_{year}_{month}
+        remainder = data.replace("bt_start_", "")
+        strategy_id, year, month = remainder.rsplit("_", 2)
+        context.user_data['backtest_start_date'] = f"{year}-{month}-01"
+        await query.edit_message_text(
+            "📅 **ماه پایان بک‌تست را انتخاب کنید:**",
+            reply_markup=backtest_month_keyboard(strategy_id, "end", int(year)),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("bt_end_"):
+        if user_id != ADMIN_ID:
+            return
+        remainder = data.replace("bt_end_", "")
+        strategy_id, year, month = remainder.rsplit("_", 2)
+
+        import calendar
+        last_day = calendar.monthrange(int(year), int(month))[1]
+        end_date = f"{year}-{month}-{last_day:02d}"
+        start_date = context.user_data.get('backtest_start_date')
+
+        if not start_date:
+            await query.edit_message_text("❌ **خطا: تاریخ شروع پیدا نشد. دوباره تلاش کنید.**", reply_markup=admin_keyboard())
+            return
+
+        from strategy_registry import get_strategy
+        module = get_strategy(strategy_id)
+        display_name = module.STRATEGY_INFO.get("display_name", strategy_id) if module else strategy_id
+
+        await query.edit_message_text(
+            f"⏳ **در حال اجرای بک‌تست...**\n\n📅 {start_date} تا {end_date}\n\nاین ممکن است چند دقیقه طول بکشد.",
+            parse_mode='Markdown'
+        )
+
+        from backtest import run_backtest, format_backtest_report
+        result = run_backtest(strategy_id, start_date, end_date, timeframe="1h")
+        report_text = format_backtest_report(result, display_name)
+
+        await query.message.reply_text(report_text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        return
+
 
 # ============ مدیریت پیام‌ها ============
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1179,6 +1412,23 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 )
             return
 
+        if action == 'rename_button':
+            button_key = context.user_data.get('rename_button_key')
+            context.user_data['admin_action'] = None
+
+            if not button_key:
+                await update.message.reply_text("❌ **خطا: دکمه پیدا نشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                return
+
+            from database import set_button_label
+            set_button_label(button_key, text.strip())
+            await update.message.reply_text(
+                f"✅ **اسم دکمه به «{text.strip()}» تغییر کرد.**",
+                reply_markup=button_edit_keyboard(button_key),
+                parse_mode='Markdown'
+            )
+            return
+
     lang = context.user_data.get('lang') or get_user_lang(user_id)
     await update.message.reply_text(
         get_text(lang, 'use_buttons'),
@@ -1193,7 +1443,12 @@ def main():
         init_settings()
         create_database()
 
-        app = Application.builder().token(TOKEN).build()
+        async def _post_init(application):
+            """بعد از راه‌اندازی کامل ربات، حلقه‌ی چک خودکار TP/SL رو در پس‌زمینه اجرا می‌کنه."""
+            from auto_tracker import auto_tracker_loop
+            asyncio.create_task(auto_tracker_loop(application))
+
+        app = Application.builder().token(TOKEN).post_init(_post_init).build()
 
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("admin", admin))
