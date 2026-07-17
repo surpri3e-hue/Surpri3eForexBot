@@ -1,28 +1,71 @@
 # ============================================================
-# 📁 zigzag_logic.py
-# 📌 وظیفه: Surpri3e Strategy - استراتژی مستقل بر پایه‌ی نقاط
-#          چرخش ZigZag (بر اساس منطق Pine Script buysellsignal-yashgode9)
-# 📅 بازنویسی نهایی (نسخه‌ی سخت‌گیر، بدون تناقض): 2026-07-15
+# 📁 strategies/surpri3e_zigzag.py
+# 📌 Surpri3e Strategy - استراتژی مستقل بر پایه‌ی نقاط چرخش ZigZag
+#    (بر اساس منطق Pine Script buysellsignal-yashgode9)
+# 📅 نسخه‌ی plugin-محور: 2026-07-17
 #
-# اصول این نسخه:
-#   - پارامترها سخت‌گیرانه‌ن: ترجیح با سیگنال کمتر ولی معتبرتر
-#   - هیچ عدد نمایشی (SL/TP) بعد از محاسبه‌ی نهایی دستکاری نمی‌شه
-#     (رفع باگ قبلی که risk را clamp می‌کرد ولی SL نمایشی را نه)
-#   - برچسب قدرت سیگنال (strength) واقعاً از یک معیار عددی می‌آد،
-#     نه یک متن ثابت ادعایی
+# این فایل از معماری استاندارد استراتژی‌های ربات پیروی می‌کنه:
+#   - STRATEGY_INFO: مشخصات نمایشی + پارامترهای قابل‌تنظیم از پنل ادمین
+#   - analyze(df): تابع اصلی تحلیل، امضای یکسان با همه‌ی استراتژی‌ها
+#
+# پارامترهای این استراتژی از دیتابیس (strategy_settings) خونده می‌شن؛
+# اگه هنوز از پنل ادمین تغییری داده نشده باشن، مقادیر DEFAULT همینجا
+# استفاده می‌شه.
 # ============================================================
 
 import numpy as np
 
-# ===== تنظیمات سخت‌گیرانه (تست‌شده: ~64٪ موفقیت هر تلاش روی دیتای تصادفی) =====
-DEPTH_ENGINE = 7          # عمق pivot - هر چه بزرگتر، فیلتر نویز قوی‌تر
-DEVIATION_ENGINE = 4.0    # حداقل فاصله‌ی قیمتی بین دو pivot هم‌جهت متوالی
-MAX_PIVOT_AGE_BARS = 15   # نقطه‌ی چرخشی که قدیمی‌تر از این باشه، دیگه معتبر نیست
+STRATEGY_ID = "surpri3e"
 
-# حداقل و حداکثر منطقی برای فاصله‌ی SL از entry (به دلار)
+STRATEGY_INFO = {
+    "id": STRATEGY_ID,
+    "display_name": "🌀 Surpri3e Strategy",
+    "description": "بر پایه‌ی نقاط چرخش ZigZag (Pine Script buysellsignal-yashgode9)",
+    # پارامترهای قابل‌تنظیم از پنل ادمین: نام، مقدار پیش‌فرض، نوع، بازه‌ی مجاز
+    "params": {
+        "depth": {
+            "label": "عمق تشخیص Pivot (Depth)",
+            "default": 7,
+            "type": "int",
+            "min": 3,
+            "max": 20,
+            "help": "عدد بزرگتر = فیلتر نویز قوی‌تر، سیگنال کمتر ولی معتبرتر",
+        },
+        "deviation": {
+            "label": "حداقل نوسان قیمتی (Deviation)",
+            "default": 4.0,
+            "type": "float",
+            "min": 0.5,
+            "max": 20.0,
+            "help": "حداقل فاصله‌ی قیمتی بین دو نقطه‌ی چرخش هم‌جهت متوالی",
+        },
+        "max_age": {
+            "label": "حداکثر قدمت نقطه‌ی چرخش (کندل)",
+            "default": 15,
+            "type": "int",
+            "min": 3,
+            "max": 50,
+            "help": "نقطه‌ی چرخشی که قدیمی‌تر از این باشه، دیگه معتبر نیست",
+        },
+    },
+}
+
+# حداقل و حداکثر منطقی برای فاصله‌ی SL از entry (به دلار) - ثابت، نه از پنل ادمین
 MIN_RISK = 2.0
 MAX_RISK = 15.0
 SL_BUFFER = 0.5  # فاصله‌ی اطمینان اضافه از خودِ نقطه‌ی pivot
+
+
+def _get_param(strategy_id, param_name):
+    """پارامتر رو از دیتابیس می‌خونه؛ اگه ذخیره نشده بود، مقدار پیش‌فرض این فایل."""
+    from database import get_strategy_setting
+    param_def = STRATEGY_INFO["params"][param_name]
+    raw = get_strategy_setting(strategy_id, param_name, default=None)
+    if raw is None:
+        return param_def["default"]
+    if param_def["type"] == "int":
+        return int(raw)
+    return float(raw)
 
 
 def _find_raw_pivots(high, low, depth):
@@ -74,15 +117,16 @@ def _apply_zigzag_filter(pivots, deviation):
     return filtered
 
 
-def get_zigzag_signal(df, depth=DEPTH_ENGINE, deviation=DEVIATION_ENGINE):
+def get_zigzag_signal(df, depth=None, deviation=None):
     """
     تحلیل ZigZag روی دیتافریم کندلی. خروجی dict یا None:
-        {
-            'direction': 'BUY' یا 'SELL',
-            'pivot_price': float,
-            'bars_ago': int,
-        }
+        {'direction': 'BUY'|'SELL', 'pivot_price': float, 'bars_ago': int}
     """
+    if depth is None:
+        depth = _get_param(STRATEGY_ID, "depth")
+    if deviation is None:
+        deviation = _get_param(STRATEGY_ID, "deviation")
+
     if df is None or len(df) < depth * 2 + 5:
         return None
 
@@ -107,28 +151,25 @@ def get_zigzag_signal(df, depth=DEPTH_ENGINE, deviation=DEVIATION_ENGINE):
     }
 
 
-def analyze_surpri3e_strategy(df):
+def analyze(df):
     """
-    Surpri3e Strategy - سیگنال مستقیم از نقطه‌ی چرخش ZigZag،
-    بدون ترکیب با ICT/SMC یا اندیکاتورهای تکمیلی.
-
+    تابع اصلی تحلیل - امضای استاندارد همه‌ی استراتژی‌های plugin.
     خروجی: (signal: dict, analysis: dict) یا (None, None)
-
-    قواعد سخت‌گیر:
-      - نقطه‌ی چرخش باید حداکثر MAX_PIVOT_AGE_BARS کندل قبل شکل گرفته باشه
-      - SL/TP نهایی همیشه از entry و risk نهایی (بعد از clamp) محاسبه می‌شن،
-        هرگز از عدد خام pivot که ممکنه بعد از clamp دیگه معتبر نباشه
     """
     if df is None or len(df) < 30:
         return None, None
 
     is_real = df.attrs.get('is_real_data', True)
 
-    zz = get_zigzag_signal(df)
+    depth = _get_param(STRATEGY_ID, "depth")
+    deviation = _get_param(STRATEGY_ID, "deviation")
+    max_age = _get_param(STRATEGY_ID, "max_age")
+
+    zz = get_zigzag_signal(df, depth=depth, deviation=deviation)
     if not zz:
         return None, None
 
-    if zz['bars_ago'] > MAX_PIVOT_AGE_BARS:
+    if zz['bars_ago'] > max_age:
         return None, None
 
     direction = zz['direction']
@@ -139,7 +180,6 @@ def analyze_surpri3e_strategy(df):
 
     entry = round(current, 2)
 
-    # ===== محاسبه‌ی ریسک خام از فاصله‌ی entry تا pivot، سپس clamp =====
     if direction == "BUY":
         raw_risk = entry - (zz['pivot_price'] - SL_BUFFER)
     else:
@@ -147,8 +187,7 @@ def analyze_surpri3e_strategy(df):
 
     risk = max(MIN_RISK, min(MAX_RISK, raw_risk))
 
-    # ===== SL/TP نهایی همیشه از entry + risk نهایی (بعد از clamp) ساخته می‌شه =====
-    # این‌طوری هیچ‌وقت بین عدد نمایشی SL و ریسک واقعی محاسبه‌شده ناسازگاری نیست.
+    # SL/TP نهایی همیشه از entry + risk نهایی (بعد از clamp) ساخته می‌شه
     if direction == "BUY":
         sl = round(entry - risk, 2)
         tp = round(entry + (risk * rr_ratio), 2)
@@ -156,15 +195,9 @@ def analyze_surpri3e_strategy(df):
         sl = round(entry + risk, 2)
         tp = round(entry - (risk * rr_ratio), 2)
 
-    # ===== قدرت سیگنال بر اساس معیار عددی واقعی: تازگی نقطه‌ی چرخش =====
-    # نکته: چون تعریف pivot نیاز به حداقل DEPTH_ENGINE کندل تثبیت‌شده داره،
-    # کمترین مقدار ممکن برای bars_ago همیشه برابر DEPTH_ENGINE است - نه صفر.
-    # پس آستانه باید نسبت به depth سنجیده بشه، نه یک عدد ثابت مطلق.
-    freshness_threshold = DEPTH_ENGINE + 3
-    if zz['bars_ago'] <= freshness_threshold:
-        strength = 'NORMAL'
-    else:
-        strength = 'WEAK'
+    # قدرت سیگنال: نسبت به depth سنجیده می‌شه (چون کمترین bars_ago ممکن = depth است)
+    freshness_threshold = depth + 3
+    strength = 'NORMAL' if zz['bars_ago'] <= freshness_threshold else 'WEAK'
 
     reasons = [f"ZigZag✅ (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"]
 
@@ -184,7 +217,7 @@ def analyze_surpri3e_strategy(df):
 
     analysis = {
         'reasons': reasons,
-        'style': 'Surpri3e Strategy',
+        'style': STRATEGY_INFO["display_name"],
         'score': None,
         'strength': strength,
     }
