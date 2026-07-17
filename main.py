@@ -48,7 +48,8 @@ from database import (
     get_user_rr,
     check_signal_cooldown,
     record_signal_time,
-    get_user_winrate_stats
+    get_user_winrate_stats,
+    user_exists
 )
 
 from settings import init_settings, get_settings
@@ -214,6 +215,7 @@ def admin_keyboard():
             InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")
         ],
         [InlineKeyboardButton("📊 Reports", callback_data="reports")],
+        [InlineKeyboardButton("⚙️ مدیریت استراتژی‌ها", callback_data="manage_strategies")],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -226,6 +228,42 @@ def referral_keyboard(user_id, lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'copy_link'), url=link)],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============ کیبورد مدیریت استراتژی‌ها (پنل ادمین) ============
+def strategy_list_keyboard():
+    """لیست همه‌ی استراتژی‌های کشف‌شده رو نشون می‌ده."""
+    from strategy_registry import get_all_strategies
+    strategies = get_all_strategies()
+
+    keyboard = []
+    for strategy_id, module in strategies.items():
+        name = module.STRATEGY_INFO.get("display_name", strategy_id)
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"strat_view_{strategy_id}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def strategy_params_keyboard(strategy_id):
+    """پارامترهای یک استراتژی خاص رو با مقدار فعلی‌شون نشون می‌ده."""
+    from strategy_registry import get_strategy
+    from database import get_strategy_setting
+
+    module = get_strategy(strategy_id)
+    keyboard = []
+
+    if module:
+        params = module.STRATEGY_INFO.get("params", {})
+        for param_name, param_def in params.items():
+            current = get_strategy_setting(strategy_id, param_name, default=param_def["default"])
+            label = f"{param_def['label']}: {current}"
+            keyboard.append([InlineKeyboardButton(label, callback_data=f"strat_edit_{strategy_id}_{param_name}")])
+
+        keyboard.append([InlineKeyboardButton("🔄 بازگشت به پیش‌فرض", callback_data=f"strat_reset_{strategy_id}")])
+
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="manage_strategies")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -242,33 +280,24 @@ async def check_channel_membership(user_id, context):
 
 
 # ============ ارسال سیگنال ============
-async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id, lang='fa'):
+async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa'):
     current_price = get_current_price()
     tehran_time = get_tehran_time()
 
     if not current_price:
         current_price = df['Close'].iloc[-1]
 
-    # ===== RR اختصاصی همین کاربر، نه سراسری =====
+    # ===== از entry/sl/tp که خود استراتژی (zigzag_logic) محاسبه کرده استفاده می‌کنیم =====
+    # این مقادیر قبلاً با در نظر گرفتن نقطه‌ی چرخش و RR اختصاصی کاربر
+    # به‌درستی و سازگار محاسبه شدن؛ نباید اینجا دوباره با یک ریسک ثابت
+    # (که باعث ناسازگاری با تحلیل واقعی می‌شد) بازنویسی بشن.
+    entry = signal['entry']
+    sl = signal['sl']
+    tp = signal['tp']
     rr_ratio = get_user_rr(user_id)
-    RISK = 5.0
-    REWARD = RISK * rr_ratio
-
-    if signal['direction'] == 'BUY':
-        entry = round(current_price, 2)
-        sl = round(current_price - RISK, 2)
-        tp = round(current_price + REWARD, 2)
-    else:
-        entry = round(current_price, 2)
-        sl = round(current_price + RISK, 2)
-        tp = round(current_price - REWARD, 2)
-
-    signal['entry'] = entry
-    signal['sl'] = sl
-    signal['tp'] = tp
 
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
-    style = analysis.get('style', 'ICT')
+    style = analysis.get('style', 'Surpri3e Strategy')
     strength = signal.get('strength', 'NORMAL')
 
     title_prefix = "⚠️ " if strength == "WEAK" else "🚨 "
@@ -293,8 +322,9 @@ async def send_signal(target, trade_id, signal, analysis, df, timeframe, user_id
 👇 {get_text(lang, 'result_label')}:
 """
 
-    await target.reply_text(
-        message,
+    await bot.send_message(
+        chat_id=chat_id,
+        text=message,
         reply_markup=signal_result_keyboard(trade_id, lang),
         parse_mode='Markdown'
     )
@@ -322,6 +352,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {CHANNEL_ID}\n\nپس از عضویت، دوباره /start را بزنید."
             )
             return
+
+    # ===== فقط کاربر جدید صفحه‌ی انتخاب زبان رو می‌بینه =====
+    # کاربر قدیمی مستقیم می‌ره سراغ منوی اصلی؛ برای تغییر زبان باید از
+    # دکمه‌ی «تغییر زبان» داخل منوی تنظیمات استفاده کنه.
+    if user_exists(user_id):
+        lang = get_user_lang(user_id)
+        context.user_data['lang'] = lang
+        await update.message.reply_text(
+            get_text(lang, 'welcome_back'),
+            reply_markup=user_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
 
     await update.message.reply_text(
         "🌍 **زبان خود را انتخاب کنید / Choose your language:**",
@@ -357,10 +400,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         add_user(user_id, lang=lang)
 
         # سبک همیشه Surpri3e Strategy است - فقط باید حالت (Fast Scalp/Standard) انتخاب بشه
-        context.user_data['style'] = 'SURPRI3E'
+        context.user_data['style'] = 'surpri3e'
         conn = connect()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET style=? WHERE id=?", ('SURPRI3E', user_id))
+        cursor.execute("UPDATE users SET style=? WHERE id=?", ('surpri3e', user_id))
         conn.commit()
         conn.close()
 
@@ -504,24 +547,46 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     trade_id = save_trade(signal, user_id, style, strength)
                     use_signal(user_id)
                     record_signal_time(user_id, timeframe)  # ثبت زمان برای cooldown بعدی
-                    await send_signal(query.message, trade_id, signal, analysis, df, timeframe, user_id, lang)
+
+                    # ===== پاک کردن پیام لودینگ قبل از نمایش نتیجه =====
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+
+                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang)
                 else:
-                    await query.message.reply_text(
-                        get_text(lang, 'no_signal'),
+                    try:
+                        await query.message.delete()
+                    except Exception:
+                        pass
+                    await context.bot.send_message(
+                        chat_id=user_id,
+                        text=get_text(lang, 'no_signal'),
                         reply_markup=user_keyboard(lang),
                         parse_mode='Markdown'
                     )
             else:
-                await query.message.reply_text(
-                    get_text(lang, 'error'),
+                try:
+                    await query.message.delete()
+                except Exception:
+                    pass
+                await context.bot.send_message(
+                    chat_id=user_id,
+                    text=get_text(lang, 'error'),
                     reply_markup=user_keyboard(lang),
                     parse_mode='Markdown'
                 )
 
         except Exception as e:
             logger.exception(f"خطا در تولید سیگنال برای کاربر {user_id}")
-            await query.message.reply_text(
-                f"❌ {get_text(lang, 'error')}: {str(e)}",
+            try:
+                await query.message.delete()
+            except Exception:
+                pass
+            await context.bot.send_message(
+                chat_id=user_id,
+                text=f"❌ {get_text(lang, 'error')}: {str(e)}",
                 reply_markup=user_keyboard(lang),
                 parse_mode='Markdown'
             )
@@ -904,6 +969,74 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(report(), reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
+    # ===== مدیریت استراتژی‌ها =====
+    if data == "manage_strategies":
+        if user_id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            "⚙️ **مدیریت استراتژی‌ها**\n\nیک استراتژی را برای مشاهده و تنظیم پارامترهایش انتخاب کنید:",
+            reply_markup=strategy_list_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("strat_view_"):
+        if user_id != ADMIN_ID:
+            return
+        strategy_id = data.replace("strat_view_", "")
+
+        from strategy_registry import get_strategy
+        module = get_strategy(strategy_id)
+        if not module:
+            await query.edit_message_text("❌ استراتژی پیدا نشد.", reply_markup=strategy_list_keyboard())
+            return
+
+        info = module.STRATEGY_INFO
+        text = f"⚙️ **{info['display_name']}**\n\n{info.get('description', '')}\n\nپارامتر مورد نظر برای تغییر را انتخاب کنید:"
+        await query.edit_message_text(text, reply_markup=strategy_params_keyboard(strategy_id), parse_mode='Markdown')
+        return
+
+    if data.startswith("strat_edit_"):
+        if user_id != ADMIN_ID:
+            return
+        # فرمت: strat_edit_{strategy_id}_{param_name}
+        remainder = data.replace("strat_edit_", "")
+        strategy_id, param_name = remainder.rsplit("_", 1)
+
+        from strategy_registry import get_strategy
+        module = get_strategy(strategy_id)
+        if not module or param_name not in module.STRATEGY_INFO.get("params", {}):
+            await query.edit_message_text("❌ پارامتر پیدا نشد.", reply_markup=strategy_list_keyboard())
+            return
+
+        param_def = module.STRATEGY_INFO["params"][param_name]
+        await query.edit_message_text(
+            f"⚙️ **{param_def['label']}**\n\n"
+            f"{param_def.get('help', '')}\n\n"
+            f"بازه‌ی مجاز: {param_def['min']} تا {param_def['max']}\n"
+            f"مقدار پیش‌فرض: {param_def['default']}\n\n"
+            f"مقدار جدید را وارد کنید:",
+            reply_markup=strategy_params_keyboard(strategy_id),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'edit_strategy_param'
+        context.user_data['edit_strategy_id'] = strategy_id
+        context.user_data['edit_param_name'] = param_name
+        return
+
+    if data.startswith("strat_reset_"):
+        if user_id != ADMIN_ID:
+            return
+        strategy_id = data.replace("strat_reset_", "")
+        from database import reset_strategy_settings
+        reset_strategy_settings(strategy_id)
+        await query.edit_message_text(
+            "🔄 **پارامترها به مقادیر پیش‌فرض بازگشتند.**",
+            reply_markup=strategy_params_keyboard(strategy_id),
+            parse_mode='Markdown'
+        )
+        return
+
 
 # ============ مدیریت پیام‌ها ============
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -1002,6 +1135,48 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ **لطفاً آیدی عددی وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
+            return
+
+        if action == 'edit_strategy_param':
+            strategy_id = context.user_data.get('edit_strategy_id')
+            param_name = context.user_data.get('edit_param_name')
+
+            from strategy_registry import get_strategy
+            from database import set_strategy_setting
+
+            module = get_strategy(strategy_id) if strategy_id else None
+            context.user_data['admin_action'] = None
+
+            if not module or param_name not in module.STRATEGY_INFO.get("params", {}):
+                await update.message.reply_text("❌ **خطا: استراتژی یا پارامتر پیدا نشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                return
+
+            param_def = module.STRATEGY_INFO["params"][param_name]
+            try:
+                value = float(text.replace(',', '.'))
+                if param_def["type"] == "int":
+                    value = int(value)
+
+                if not (param_def["min"] <= value <= param_def["max"]):
+                    await update.message.reply_text(
+                        f"❌ **مقدار باید بین {param_def['min']} و {param_def['max']} باشد.**",
+                        reply_markup=strategy_params_keyboard(strategy_id),
+                        parse_mode='Markdown'
+                    )
+                    return
+
+                set_strategy_setting(strategy_id, param_name, value)
+                await update.message.reply_text(
+                    f"✅ **{param_def['label']}** به مقدار **{value}** تغییر کرد.",
+                    reply_markup=strategy_params_keyboard(strategy_id),
+                    parse_mode='Markdown'
+                )
+            except ValueError:
+                await update.message.reply_text(
+                    "❌ **لطفاً یک عدد معتبر وارد کنید.**",
+                    reply_markup=strategy_params_keyboard(strategy_id),
+                    parse_mode='Markdown'
+                )
             return
 
     lang = context.user_data.get('lang') or get_user_lang(user_id)
