@@ -1,15 +1,10 @@
-from database import (
-    get_setting, update_setting, get_all_settings,
-    get_users_count, get_all_users, set_user_vip, delete_user,
-    reset_daily_signals, get_active_users_today, get_today_stats,
-    get_statistics, connect
-)
+# admin_tools.py
+from database import get_setting, update_setting, get_all_settings
+from users import get_users_count, get_all_users, set_user_vip, delete_user, reset_daily_signals, get_active_users_today
 from datetime import datetime
 import pytz
-import logging
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
-
 
 # ============ کنترل‌های اصلی ============
 def toggle_bot_lock():
@@ -18,13 +13,11 @@ def toggle_bot_lock():
     update_setting('bot_locked', 'true' if new_status else 'false')
     return '🔒 قفل شده' if new_status else '🔓 باز'
 
-
 def toggle_signal():
     current = get_setting('signal_enabled') == 'true'
     new_status = not current
     update_setting('signal_enabled', 'true' if new_status else 'false')
     return '🚀 فعال' if new_status else '⛔ غیرفعال'
-
 
 def toggle_channel_lock():
     current = get_setting('channel_locked') == 'true'
@@ -32,50 +25,33 @@ def toggle_channel_lock():
     update_setting('channel_locked', 'true' if new_status else 'false')
     return '🔒 فعال' if new_status else '🔓 غیرفعال'
 
-
 # ============ تنظیمات سیگنال ============
 def set_daily_signal_limit(value):
-    """تنظیم تعداد سیگنال روزانه برای همه کاربران"""
     try:
         value = int(value)
         if value <= 0:
             return "❌ مقدار باید بزرگتر از صفر باشد."
-
         update_setting('daily_signal_limit', str(value))
-
-        conn = connect()
-        cursor = conn.cursor()
-        cursor.execute("UPDATE users SET daily_signal_limit=?", (value,))
-        conn.commit()
-        conn.close()
-
-        return f"✅ تعداد سیگنال روزانه به {value} تغییر کرد و روی همه کاربران اعمال شد."
-    except Exception:
+        return f"✅ تعداد سیگنال روزانه به {value} تغییر کرد."
+    except:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
-
 def set_rr_ratio(value):
-    """
-    ⚠️ این فقط RR پیش‌فرض برای کاربرهای تازه‌وارد رو تغییر می‌ده.
-    هر کاربر موجود می‌تونه RR اختصاصی خودش رو با انتخاب دکمه در ربات ست کنه
-    (ذخیره می‌شه در ستون rr_ratio جدول users - نه اینجا).
-    """
     try:
         value = float(value)
         if value <= 0:
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('rr_ratio', str(value))
-        return f"✅ نسبت RR پیش‌فرض (برای کاربران جدید) به 1:{value} تغییر کرد."
-    except Exception:
+        return f"✅ نسبت RR به 1:{value} تغییر کرد."
+    except:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
-
 def set_default_timeframe(value):
-    if value not in ['1min', '5min', '15min', '1h', '4h', '1d']:
-        return "❌ تایم‌فریم نامعتبر"
+    valid = ['1min', '5min', '15min', '1h', '4h', '1d']
+    if value not in valid:
+        return f"❌ تایم‌فریم نامعتبر. گزینه‌ها: {', '.join(valid)}"
     update_setting('default_timeframe', value)
     return f"✅ تایم‌فریم پیش‌فرض: {value}"
-
 
 # ============ سیستم رفرال ============
 def set_referral_bonus(value):
@@ -85,9 +61,8 @@ def set_referral_bonus(value):
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('referral_bonus', str(value))
         return f"✅ پاداش هر رفرال: {value} سیگنال اضافی"
-    except Exception:
+    except:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
-
 
 def set_referral_threshold(value):
     try:
@@ -96,16 +71,164 @@ def set_referral_threshold(value):
             return "❌ مقدار باید بزرگتر از صفر باشد."
         update_setting('referral_threshold', str(value))
         return f"✅ آستانه رفرال: {value}"
-    except Exception:
+    except:
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
+# ============ ویرایش دکمه‌ها ============
+def edit_button_name(button_key, new_name):
+    """ویرایش اسم دکمه‌ها"""
+    from database import update_setting
+    update_setting(f'button_{button_key}', new_name)
+    return f"✅ دکمه با موفقیت به '{new_name}' تغییر کرد."
+
+def get_all_buttons(lang='fa'):
+    """دریافت همه دکمه‌ها با اسم‌های سفارشی"""
+    from database import get_setting
+    default_buttons = {
+        'signal_btn': '🚨 دریافت سیگنال',
+        'performance_btn': '📊 عملکرد',
+        'history_btn': '📜 تاریخچه',
+        'price_btn': '💰 قیمت لحظه‌ای',
+        'vip_btn': '💎 VIP',
+        'referral_btn': '👥 رفرال',
+        'settings_btn': '⚙️ تنظیمات',
+        'support_btn': '🆘 پشتیبانی'
+    }
+    buttons = {}
+    for key, default in default_buttons.items():
+        custom = get_setting(f'button_{key}')
+        buttons[key] = custom if custom else default
+    return buttons
+
+# ============ تنظیم سخت‌گیری استراتژی ============
+def set_strategy_strictness(strategy_id, value):
+    """تنظیم سخت‌گیری استراتژی"""
+    from database import set_strategy_setting
+    try:
+        value = int(value)
+        if 0 <= value <= 100:
+            set_strategy_setting(strategy_id, "strictness", value)
+            return f"✅ سخت‌گیری استراتژی به {value}% تغییر کرد."
+        return "❌ عدد باید بین ۰ تا ۱۰۰ باشد."
+    except:
+        return "❌ لطفاً یک عدد معتبر وارد کنید."
+
+# ============ بکتست ============
+def run_backtest():
+    """اجرای بکتست"""
+    from database import get_setting
+    from datetime import datetime, timedelta
+    import pandas as pd
+    from market import get_gold_candles
+    from strategy_registry import get_strategy
+    from signals import create_signal
+    
+    start_str = get_setting('backtest_start')
+    end_str = get_setting('backtest_end')
+    
+    if not start_str or not end_str:
+        return "❌ ابتدا بازه زمانی بکتست را تنظیم کنید."
+    
+    try:
+        start_date = datetime.strptime(start_str, '%Y-%m-%d')
+        end_date = datetime.strptime(end_str, '%Y-%m-%d')
+    except:
+        return "❌ فرمت تاریخ اشتباه است."
+    
+    # ===== دریافت دیتا برای بازه =====
+    try:
+        # دریافت دیتای روزانه از Twelve Data
+        import requests
+        import os
+        TWELVE_DATA_KEY = os.getenv("TWELVE_DATA")
+        
+        if TWELVE_DATA_KEY:
+            url = "https://api.twelvedata.com/time_series"
+            params = {
+                "symbol": "XAU/USD",
+                "interval": "1day",
+                "start_date": start_str,
+                "end_date": end_str,
+                "apikey": TWELVE_DATA_KEY,
+                "format": "json"
+            }
+            response = requests.get(url, params=params, timeout=30)
+            data = response.json()
+            
+            if "values" in data and len(data["values"]) > 0:
+                df_data = []
+                for candle in data["values"]:
+                    df_data.append({
+                        'Date': pd.to_datetime(candle['datetime']),
+                        'Open': float(candle['open']),
+                        'High': float(candle['high']),
+                        'Low': float(candle['low']),
+                        'Close': float(candle['close']),
+                        'Volume': int(candle.get('volume', 0))
+                    })
+                df = pd.DataFrame(df_data)
+                df = df.set_index('Date')
+                df = df.sort_index()
+            else:
+                return "❌ دیتایی برای این بازه پیدا نشد."
+        else:
+            return "❌ کلید Twelve Data تنظیم نشده است."
+        
+        # ===== اجرای بکتست =====
+        total_signals = 0
+        tp_count = 0
+        sl_count = 0
+        
+        # گرفتن تنظیمات RR
+        rr_ratio = float(get_setting('rr_ratio') or '2')
+        
+        # تحلیل کندل به کندل
+        for i in range(20, len(df)):
+            df_slice = df.iloc[:i+1]
+            signal, analysis = create_signal(df_slice, 'surpri3e')
+            
+            if signal:
+                total_signals += 1
+                # شبیه‌سازی نتیجه
+                entry = signal['entry']
+                sl = signal['sl']
+                tp = signal['tp']
+                close = df.iloc[i]['Close']
+                
+                if signal['direction'] == 'BUY':
+                    if close >= tp:
+                        tp_count += 1
+                    elif close <= sl:
+                        sl_count += 1
+                else:  # SELL
+                    if close <= tp:
+                        tp_count += 1
+                    elif close >= sl:
+                        sl_count += 1
+        
+        # محاسبه وین‌ریت
+        winrate = round((tp_count / total_signals) * 100, 2) if total_signals > 0 else 0
+        
+        return f"""
+📊 **نتیجه بکتست Surpri3e Strategy**
+
+📅 **بازه زمانی:** {start_str} تا {end_str}
+📈 **کل سیگنال‌ها:** {total_signals}
+✅ **TP:** {tp_count}
+❌ **SL:** {sl_count}
+🎯 **وین‌ریت:** {winrate}%
+🎯 **نسبت RR:** 1:{rr_ratio}
+📊 **مجموع سود:** {tp_count * rr_ratio - sl_count} R
+        """
+        
+    except Exception as e:
+        return f"❌ خطا در اجرای بکتست: {str(e)}"
 
 # ============ داشبورد ============
 def dashboard():
     settings = get_all_settings()
     users = get_users_count()
     active = get_active_users_today()
-    today_stats = get_today_stats()
 
     return f"""
 📊 **داشبورد مدیریت**
@@ -113,27 +236,18 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
-🎯 **نسبت RR پیش‌فرض:** 1:{settings.get('rr_ratio', '2')} (هر کاربر می‌تواند مقدار خودش را داشته باشد)
+🎯 **نسبت RR:** 1:{settings.get('rr_ratio', '2')}
 ⏱️ **تایم‌فریم:** {settings.get('default_timeframe', '1h')}
 
 🔒 **وضعیت ربات:** {'🔒 قفل' if settings.get('bot_locked') == 'true' else '🔓 باز'}
 🚀 **سیگنال:** {'✅ فعال' if settings.get('signal_enabled') == 'true' else '❌ غیرفعال'}
 🔒 **قفل کانال:** {'✅ فعال' if settings.get('channel_locked') == 'true' else '❌ غیرفعال'}
 
-📊 **آمار امروز:**
-• سیگنال‌های استفاده شده: {today_stats['signals_used']}
-• TP ثبت شده: {today_stats['tp_count']}
-• SL ثبت شده: {today_stats['sl_count']}
-
-🔄 **سیستم رفرال:**
-• پاداش: {settings.get('referral_bonus', '1')} سیگنال
-• آستانه: {settings.get('referral_threshold', '5')} رفرال
-
 📡 **آخرین بروزرسانی:** {datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d %H:%M')}
 """
 
-
 def report():
+    from database import get_statistics, get_today_stats
     stats = get_statistics()
     today_stats = get_today_stats()
     users = get_users_count()
@@ -154,41 +268,3 @@ def report():
 
 📡 **تاریخ:** {datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d %H:%M')}
 """
-
-
-# ============ ریست شبانه ============
-def reset_daily():
-    reset_daily_signals()
-    logging.info("🔄 سیگنال‌های روزانه ریست شد.")
-    return "✅ سیگنال‌های روزانه ریست شد"
-
-
-def get_user_detail(user_id):
-    """گرفتن جزئیات یک کاربر"""
-    conn = connect()
-    cursor = conn.cursor()
-    cursor.execute("""
-        SELECT id, username, first_name, last_name, joined_at, last_active,
-               is_vip, referral_count, daily_signal_limit, signals_used_today, lang, style, rr_ratio
-        FROM users WHERE id=?
-    """, (user_id,))
-    result = cursor.fetchone()
-    conn.close()
-
-    if result:
-        return {
-            'id': result[0],
-            'username': result[1],
-            'first_name': result[2],
-            'last_name': result[3],
-            'joined_at': result[4],
-            'last_active': result[5],
-            'is_vip': bool(result[6]),
-            'referral_count': result[7],
-            'daily_signal_limit': result[8],
-            'signals_used_today': result[9],
-            'lang': result[10] if len(result) > 10 else 'fa',
-            'style': result[11] if len(result) > 11 else 'ICT',
-            'rr_ratio': result[12] if len(result) > 12 else 2.0
-        }
-    return None
