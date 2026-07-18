@@ -480,8 +480,8 @@ async def check_channel_membership(user_id, context):
 
 
 # ============ ارسال سیگنال ============
-async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa'):
-    current_price = get_current_price()
+async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD'):
+    current_price = get_current_price(symbol)
     tehran_time = get_tehran_time()
 
     if not current_price:
@@ -505,6 +505,7 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
     message = f"""
 {title_prefix}**{get_text(lang, 'signal_title')}**
 
+**💱 نماد:** {symbol}
 **📊 {get_text(lang, 'style_label')}:** {style}
 **📈 {get_text(lang, 'direction_label')}:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
 **📍 {get_text(lang, 'entry_label')}:** {entry:.2f}
@@ -792,7 +793,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
 
-                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang)
+                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol)
                 else:
                     try:
                         await query.message.delete()
@@ -900,10 +901,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== قیمت لحظه‌ای =====
     if data == "live_price":
         lang = context.user_data.get('lang') or get_user_lang(user_id)
+        symbol = context.user_data.get('symbol', 'XAU/USD')
         await query.edit_message_text(get_text(lang, 'fetching_price'), parse_mode='Markdown')
 
         try:
-            price = get_current_price()
+            price = get_current_price(symbol)
             tehran_time = get_tehran_time()
 
             if price:
