@@ -77,7 +77,25 @@ def create_database():
     )
     """)
 
+    # ===== جدول دکمه‌های سفارشی که ادمین از پنل مدیریت ساخته =====
+    # هر دکمه یا یک متن ثابت (response_text) نمایش می‌ده، یا اگه link_action
+    # پر شده باشه، دقیقاً مثل یکی از دکمه‌های موجود ربات عمل می‌کنه
+    # (مثلاً همون کاری که دکمه‌ی "دریافت سیگنال" انجام می‌ده).
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS custom_buttons (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        button_key TEXT UNIQUE,
+        label TEXT,
+        response_text TEXT,
+        link_action TEXT,
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # ===== migration برای دیتابیس‌های قدیمی‌تر که ستون‌های جدید رو ندارن =====
+    if not _column_exists(cursor, "custom_buttons", "link_action"):
+        cursor.execute("ALTER TABLE custom_buttons ADD COLUMN link_action TEXT")
+
     if not _column_exists(cursor, "users", "rr_ratio"):
         cursor.execute("ALTER TABLE users ADD COLUMN rr_ratio REAL DEFAULT 2")
 
@@ -236,6 +254,57 @@ def reset_button_customization(button_key):
     cursor = conn.cursor()
     cursor.execute("DELETE FROM bot_settings WHERE setting_key IN (?, ?)",
                    (f"btn_name_{button_key}", f"btn_hidden_{button_key}"))
+    conn.commit()
+    conn.close()
+
+
+# ============ دکمه‌های سفارشی (کاملاً جدید، ساخته‌شده توسط ادمین) ============
+def add_custom_button(button_key, label, response_text=None, link_action=None):
+    """
+    یک دکمه‌ی کاملاً جدید می‌سازه.
+    اگه link_action پر باشه، دکمه دقیقاً مثل یکی از دکمه‌های موجود ربات
+    عمل می‌کنه (مثلاً link_action='signal_menu' یعنی این دکمه هم مثل
+    دکمه‌ی «دریافت سیگنال» رفتار می‌کنه). در غیر این صورت، response_text
+    (متن ثابت) با کلیک نمایش داده می‌شه.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO custom_buttons (button_key, label, response_text, link_action) VALUES (?, ?, ?, ?) "
+        "ON CONFLICT(button_key) DO UPDATE SET label=excluded.label, response_text=excluded.response_text, link_action=excluded.link_action",
+        (button_key, label, response_text, link_action)
+    )
+    conn.commit()
+    conn.close()
+
+
+def get_all_custom_buttons():
+    """همه‌ی دکمه‌های سفارشی رو برمی‌گردونه: لیست dict با button_key, label, response_text, link_action."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT button_key, label, response_text, link_action FROM custom_buttons ORDER BY id")
+    rows = cursor.fetchall()
+    conn.close()
+    return [{'button_key': r[0], 'label': r[1], 'response_text': r[2], 'link_action': r[3]} for r in rows]
+
+
+def get_custom_button(button_key):
+    """یک دکمه‌ی سفارشی خاص رو برمی‌گردونه، یا None اگه پیدا نشه."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT button_key, label, response_text, link_action FROM custom_buttons WHERE button_key=?", (button_key,))
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {'button_key': row[0], 'label': row[1], 'response_text': row[2], 'link_action': row[3]}
+    return None
+
+
+def delete_custom_button(button_key):
+    """یک دکمه‌ی سفارشی رو کامل حذف می‌کنه."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("DELETE FROM custom_buttons WHERE button_key=?", (button_key,))
     conn.commit()
     conn.close()
 
