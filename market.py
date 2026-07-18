@@ -58,12 +58,19 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
     دیتای کندلی رو برای نماد مشخص‌شده برمی‌گردونه (پیش‌فرض طلا).
     df.attrs['is_real_data'] مشخص می‌کنه دیتا از Twelve Data اومده (True)
     یا دیتای تستی/شبیه‌سازی‌شده هست (False).
+    df.attrs['fallback_reason'] در صورت افتادن به دیتای تستی، دلیل دقیق را
+    نگه می‌داره (مثلاً پیام خطای واقعی از Twelve Data) تا هم در پیام به
+    کاربر/ادمین قابل نمایش باشه، هم برای دیباگ در دسترس بمونه.
     ⚠️ همیشه قبل از تحلیل این پرچم رو چک کن - دیتای تستی رندومه و
     هیچ سیگنالی روش معتبر نیست.
     """
     if not TWELVE_DATA_KEY:
-        print("⚠️ TWELVE_DATA_KEY تنظیم نشده! از دیتای تستی استفاده می‌شود.")
-        return generate_test_data(timeframe, count)
+        reason = "کلید TWELVE_DATA تنظیم نشده است."
+        print(f"⚠️ {reason} از دیتای تستی استفاده می‌شود.")
+        df = generate_test_data(timeframe, count, symbol)
+        if df is not None:
+            df.attrs['fallback_reason'] = reason
+        return df
 
     try:
         granularity = {
@@ -81,7 +88,16 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
         }
 
         response = requests.get(url, params=params, timeout=15)
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError:
+            reason = f"پاسخ نامعتبر از سرور Twelve Data (کد HTTP: {response.status_code})."
+            print(f"❌ {reason}")
+            df = generate_test_data(timeframe, count, symbol)
+            if df is not None:
+                df.attrs['fallback_reason'] = reason
+            return df
 
         if "values" in data and len(data["values"]) > 0:
             df_data = []
@@ -105,18 +121,31 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
             print(f"✅ Twelve Data ({symbol}): {len(df)} کندل دریافت شد (دیتای واقعی)")
             return df
         else:
-            print(f"⚠️ پاسخ نامعتبر از Twelve Data برای {symbol}: {data}")
-            return generate_test_data(timeframe, count)
+            # ===== پیام خطای واقعی از خود API رو استخراج می‌کنیم - نه یک پیام ژنریک =====
+            api_message = data.get('message') or data.get('code') or str(data)
+            reason = f"Twelve Data برای نماد {symbol} پاسخ معتبر نداد: {api_message}"
+            print(f"⚠️ {reason}")
+            df = generate_test_data(timeframe, count, symbol)
+            if df is not None:
+                df.attrs['fallback_reason'] = reason
+            return df
 
     except Exception as e:
-        print(f"❌ خطای Twelve Data: {e}")
-        return generate_test_data(timeframe, count)
+        reason = f"خطای اتصال به Twelve Data: {e}"
+        print(f"❌ {reason}")
+        df = generate_test_data(timeframe, count, symbol)
+        if df is not None:
+            df.attrs['fallback_reason'] = reason
+        return df
 
 
-def generate_test_data(timeframe="5min", count=50):
+def generate_test_data(timeframe="5min", count=50, symbol="XAU/USD"):
     """
     ⚠️ دیتای تصادفی شبیه‌سازی‌شده - فقط برای تست ساختار کد.
     هیچ سیگنالی که روی این دیتا تولید بشه معتبر نیست چون کاملاً نویز رندومه.
+
+    قیمت پایه بر اساس نماد انتخاب می‌شه تا حداقل از نظر مقیاس واقع‌بینانه باشه
+    (هرچند همچنان کاملاً رندوم و غیرقابل‌اتکاست).
     """
     try:
         now = get_tehran_time()
@@ -128,13 +157,21 @@ def generate_test_data(timeframe="5min", count=50):
 
         dates = pd.date_range(end=now, periods=count, freq=freq_map.get(timeframe, "5min"))
 
-        base_price = 4054.03
-        noise = np.random.randn(count) * 3
+        # ===== قیمت پایه‌ی تقریبی هر نماد (فقط برای مقیاس واقع‌بینانه‌تر دیتای تستی) =====
+        BASE_PRICES = {
+            "XAU/USD": 4054.03,
+            "BTC/USD": 65000.0,
+            "ETH/USD": 3500.0,
+        }
+        base_price = BASE_PRICES.get(symbol.upper(), 4054.03)
+        volatility_factor = base_price * 0.0007  # نوسان نسبی متناسب با مقیاس قیمت
+
+        noise = np.random.randn(count) * volatility_factor
         close = base_price + noise
 
-        high = close + np.abs(np.random.randn(count) * 2 + 1.5)
-        low = close - np.abs(np.random.randn(count) * 2 + 1.5)
-        open_price = close - np.random.randn(count) * 1.5
+        high = close + np.abs(np.random.randn(count) * volatility_factor * 0.7 + volatility_factor * 0.5)
+        low = close - np.abs(np.random.randn(count) * volatility_factor * 0.7 + volatility_factor * 0.5)
+        open_price = close - np.random.randn(count) * volatility_factor * 0.5
 
         data = {
             'Open': open_price,
