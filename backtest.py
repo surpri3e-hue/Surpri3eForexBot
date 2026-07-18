@@ -22,14 +22,14 @@ MAX_LOOKFORWARD_BARS = 200
 MIN_CANDLES_FOR_ANALYSIS = 30
 
 
-def run_backtest(strategy_id, start_date, end_date, timeframe="1h"):
+def run_backtest(strategy_id, start_date, end_date, timeframe="1h", symbol="XAU/USD"):
     """
     بک‌تست یک استراتژی رو روی بازه‌ی زمانی مشخص اجرا می‌کنه.
 
     خروجی: dict
         {
             'success': bool,
-            'error': str (فقط اگه success=False),
+            'error': str (فقط اگه success=False - پیام دقیق از API یا کد),
             'total_signals': int,
             'tp_count': int,
             'sl_count': int,
@@ -38,14 +38,21 @@ def run_backtest(strategy_id, start_date, end_date, timeframe="1h"):
             'start_date': str,
             'end_date': str,
             'timeframe': str,
+            'symbol': str,
         }
     """
-    df = get_historical_candles(start_date, end_date, timeframe)
+    df, error = get_historical_candles(start_date, end_date, timeframe, symbol=symbol)
 
-    if df is None or len(df) < MIN_CANDLES_FOR_ANALYSIS + 10:
+    if df is None:
         return {
             'success': False,
-            'error': 'دیتای کافی برای این بازه‌ی زمانی در دسترس نیست (یا کلید Twelve Data تنظیم نشده).',
+            'error': error or 'دیتایی برای این بازه دریافت نشد (دلیل نامشخص).',
+        }
+
+    if len(df) < MIN_CANDLES_FOR_ANALYSIS + 10:
+        return {
+            'success': False,
+            'error': f'فقط {len(df)} کندل برای این بازه دریافت شد که برای تحلیل کافی نیست (حداقل {MIN_CANDLES_FOR_ANALYSIS + 10} کندل لازم است). بازه‌ی زمانی بزرگ‌تری امتحان کنید.',
         }
 
     total_signals = 0
@@ -117,6 +124,7 @@ def run_backtest(strategy_id, start_date, end_date, timeframe="1h"):
         'start_date': start_date,
         'end_date': end_date,
         'timeframe': timeframe,
+        'symbol': symbol,
     }
 
 
@@ -128,6 +136,7 @@ def format_backtest_report(result, strategy_display_name="استراتژی"):
     return f"""
 📊 **نتیجه‌ی بک‌تست {strategy_display_name}**
 
+💱 **نماد:** {result.get('symbol', 'XAU/USD')}
 📅 **بازه:** {result['start_date']} تا {result['end_date']}
 ⏱️ **تایم‌فریم:** {result['timeframe']}
 
