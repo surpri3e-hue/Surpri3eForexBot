@@ -44,9 +44,9 @@ def is_market_open():
     return True
 
 
-def get_gold_candles(timeframe="5min", count=50):
+def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
     """
-    دیتای کندلی طلا رو برمی‌گردونه.
+    دیتای کندلی رو برای نماد مشخص‌شده برمی‌گردونه (پیش‌فرض طلا).
     df.attrs['is_real_data'] مشخص می‌کنه دیتا از Twelve Data اومده (True)
     یا دیتای تستی/شبیه‌سازی‌شده هست (False).
     ⚠️ همیشه قبل از تحلیل این پرچم رو چک کن - دیتای تستی رندومه و
@@ -64,7 +64,7 @@ def get_gold_candles(timeframe="5min", count=50):
 
         url = "https://api.twelvedata.com/time_series"
         params = {
-            "symbol": "XAU/USD",
+            "symbol": symbol,
             "interval": granularity.get(timeframe, "5min"),
             "outputsize": count,
             "apikey": TWELVE_DATA_KEY,
@@ -93,10 +93,10 @@ def get_gold_candles(timeframe="5min", count=50):
             df = df.set_index('Date')
             df = df.sort_index()
             df.attrs['is_real_data'] = True
-            print(f"✅ Twelve Data: {len(df)} کندل دریافت شد (دیتای واقعی)")
+            print(f"✅ Twelve Data ({symbol}): {len(df)} کندل دریافت شد (دیتای واقعی)")
             return df
         else:
-            print(f"⚠️ پاسخ نامعتبر از Twelve Data: {data}")
+            print(f"⚠️ پاسخ نامعتبر از Twelve Data برای {symbol}: {data}")
             return generate_test_data(timeframe, count)
 
     except Exception as e:
@@ -145,23 +145,21 @@ def generate_test_data(timeframe="5min", count=50):
         return None
 
 
-def get_historical_candles(start_date, end_date, timeframe="1h"):
+def get_historical_candles(start_date, end_date, timeframe="1h", symbol="XAU/USD"):
     """
     دیتای کندلی تاریخی رو برای یک بازه‌ی زمانی مشخص می‌گیره (برای بک‌تست).
 
     پارامترها:
         start_date, end_date: رشته‌ی تاریخ به فرمت 'YYYY-MM-DD'
-        timeframe: تایم‌فریم کندل‌ها (پیش‌فرض 1h، چون بازه‌های چندماهه
-                   با کندل‌های کوچیک‌تر حجم دیتای خیلی زیادی می‌شه)
+        timeframe: تایم‌فریم کندل‌ها (پیش‌فرض 1h)
+        symbol: نماد Twelve Data (مثلاً 'XAU/USD' یا 'BTC/USD')
 
-    خروجی: DataFrame با df.attrs['is_real_data']=True، یا None در صورت خطا.
-    ⚠️ برخلاف get_gold_candles، این تابع fallback به دیتای تستی نداره -
-    اگه دیتای واقعی در دسترس نباشه، صادقانه None برمی‌گردونه، چون
-    بک‌تست روی دیتای تصادفی کاملاً بی‌معنیه.
+    خروجی: (df, error_message)
+        اگه موفق بود: (DataFrame با is_real_data=True، None)
+        اگه ناموفق بود: (None، متن دقیق خطا برای نمایش به کاربر)
     """
     if not TWELVE_DATA_KEY:
-        print("⚠️ TWELVE_DATA_KEY تنظیم نشده - بک‌تست بدون دیتای واقعی ممکن نیست.")
-        return None
+        return None, "کلید TWELVE_DATA در متغیرهای محیطی تنظیم نشده است."
 
     try:
         granularity = {
@@ -171,7 +169,7 @@ def get_historical_candles(start_date, end_date, timeframe="1h"):
 
         url = "https://api.twelvedata.com/time_series"
         params = {
-            "symbol": "XAU/USD",
+            "symbol": symbol,
             "interval": granularity.get(timeframe, "1h"),
             "start_date": start_date,
             "end_date": end_date,
@@ -181,7 +179,11 @@ def get_historical_candles(start_date, end_date, timeframe="1h"):
         }
 
         response = requests.get(url, params=params, timeout=30)
-        data = response.json()
+
+        try:
+            data = response.json()
+        except ValueError:
+            return None, f"پاسخ نامعتبر از سرور Twelve Data (کد HTTP: {response.status_code})."
 
         if "values" in data and len(data["values"]) > 0:
             df_data = []
@@ -203,35 +205,38 @@ def get_historical_candles(start_date, end_date, timeframe="1h"):
             df = df.sort_index()
             df.attrs['is_real_data'] = True
             print(f"✅ دیتای تاریخی: {len(df)} کندل از {start_date} تا {end_date} دریافت شد")
-            return df
+            return df, None
         else:
+            # ===== پیام خطای واقعی API رو استخراج و برگردون، نه فقط لاگ کن =====
+            api_message = data.get("message") or data.get("status") or str(data)
             print(f"⚠️ دیتایی برای این بازه پیدا نشد: {data}")
-            return None
+            return None, api_message
 
     except Exception as e:
         print(f"❌ خطای دریافت دیتای تاریخی: {e}")
-        return None
+        return None, str(e)
 
 
-def get_current_price():
-    # ===== منبع 1: GoldAPI =====
-    try:
-        url = "https://api.gold-api.com/price/XAU"
-        response = requests.get(url, timeout=10)
-        data = response.json()
-        if "price" in data:
-            price = float(data["price"])
-            print(f"✅ GoldAPI: {price}")
-            return round(price, 2)
-    except Exception as e:
-        print(f"❌ خطای GoldAPI: {e}")
+def get_current_price(symbol="XAU/USD"):
+    # ===== منبع 1: GoldAPI (فقط برای طلا کار می‌کنه) =====
+    if symbol == "XAU/USD":
+        try:
+            url = "https://api.gold-api.com/price/XAU"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            if "price" in data:
+                price = float(data["price"])
+                print(f"✅ GoldAPI: {price}")
+                return round(price, 2)
+        except Exception as e:
+            print(f"❌ خطای GoldAPI: {e}")
 
-    # ===== منبع 2: Twelve Data =====
+    # ===== منبع 2: Twelve Data (برای همه‌ی نمادها) =====
     if TWELVE_DATA_KEY:
         try:
             url = "https://api.twelvedata.com/price"
             params = {
-                "symbol": "XAU/USD",
+                "symbol": symbol,
                 "apikey": TWELVE_DATA_KEY
             }
 
@@ -240,7 +245,7 @@ def get_current_price():
 
             if "price" in data:
                 price = float(data["price"])
-                print(f"✅ Twelve Data: {price}")
+                print(f"✅ Twelve Data ({symbol}): {price}")
                 return round(price, 2)
         except Exception as e:
             print(f"❌ خطای Twelve Data: {e}")
