@@ -700,6 +700,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         style = context.user_data.get('style') or get_user_style(user_id)
         timeframe = context.user_data.get('timeframe', '5min')
+        symbol = context.user_data.get('symbol', 'XAU/USD')
 
         signals_left = get_user_signals_left(user_id)
         if signals_left <= 0:
@@ -710,8 +711,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ===== چک بسته بودن بازار (آخر هفته) =====
-        if not is_market_open():
+        # ===== چک بسته بودن بازار (فقط برای طلا/فارکس - کریپتو همیشه بازه) =====
+        if not is_market_open(symbol):
             await query.edit_message_text(
                 get_text(lang, 'market_closed'),
                 reply_markup=user_keyboard(lang),
@@ -757,7 +758,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             signal, analysis, df = None, None, None
             elapsed = 0
             frame_index = 0
-            symbol = context.user_data.get('symbol', 'XAU/USD')
 
             while elapsed < MAX_WAIT_SECONDS:
                 df = get_gold_candles(timeframe, symbol=symbol)
