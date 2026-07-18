@@ -205,7 +205,11 @@ def analyze(df):
         reasons = ["⚠️ سیگنال ضعیف - نقطه‌ی چرخش کمی قدیمی‌تر است"] + reasons
 
     if not is_real:
-        reasons = ["⚠️ هشدار: تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده، نه قیمت واقعی بازار"] + reasons
+        fallback_reason = df.attrs.get('fallback_reason')
+        if fallback_reason:
+            reasons = [f"⚠️ هشدار: تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده (دلیل: {fallback_reason})"] + reasons
+        else:
+            reasons = ["⚠️ هشدار: تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده، نه قیمت واقعی بازار"] + reasons
 
     signal = {
         'direction': direction,
