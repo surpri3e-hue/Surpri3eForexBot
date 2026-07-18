@@ -76,10 +76,20 @@ logger = logging.getLogger(__name__)
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID", 816822644))
 SUPPORT_ID = "@RealSurprise"
-CHANNEL_ID = os.getenv("CHANNEL_ID")
+CHANNEL_ID_ENV = os.getenv("CHANNEL_ID")  # مقدار اولیه از متغیر محیطی (فallback)
 
 if not TOKEN:
     raise ValueError("❌ BOT_TOKEN not set!")
+
+
+def get_channel_id():
+    """
+    آیدی کانال رو برمی‌گردونه: اول از دیتابیس (که از پنل ادمین قابل تنظیمه)،
+    اگه چیزی ذخیره نشده بود، از متغیر محیطی CHANNEL_ID.
+    """
+    from database import get_setting
+    db_value = get_setting('channel_id')
+    return db_value if db_value else CHANNEL_ID_ENV
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 
@@ -103,6 +113,21 @@ def mode_keyboard(lang='fa'):
         [InlineKeyboardButton("📈 Standard Mode", callback_data="mode_standard")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
     ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============ کیبورد انتخاب نماد معاملاتی ============
+SYMBOL_OPTIONS = {
+    "gold": ("🥇 طلا (XAU/USD)", "XAU/USD"),
+    "btc": ("₿ بیت‌کوین (BTC/USD)", "BTC/USD"),
+}
+
+
+def symbol_keyboard(lang='fa'):
+    keyboard = []
+    for key, (label, _) in SYMBOL_OPTIONS.items():
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"symbol_{key}")])
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -162,7 +187,7 @@ MANAGEABLE_USER_BUTTONS = [
 
 
 def user_keyboard(lang='fa'):
-    from database import get_button_label, is_button_hidden
+    from database import get_button_label, is_button_hidden, get_all_custom_buttons
 
     rows = []
     # دو دکمه در هر ردیف، مگر دکمه‌ی سیگنال که تنهاست
@@ -181,6 +206,15 @@ def user_keyboard(lang='fa'):
         for i in range(0, len(remaining), 2):
             pair = remaining[i:i + 2]
             rows.append([InlineKeyboardButton(lbl, callback_data=cb) for lbl, cb in pair])
+
+    # ===== دکمه‌های کاملاً سفارشی که ادمین ساخته =====
+    custom_buttons = get_all_custom_buttons()
+    for i in range(0, len(custom_buttons), 2):
+        pair = custom_buttons[i:i + 2]
+        rows.append([
+            InlineKeyboardButton(btn['label'], callback_data=f"custom_btn_{btn['button_key']}")
+            for btn in pair
+        ])
 
     rows.append([InlineKeyboardButton("🌍 " + get_text(lang, 'change_lang'), callback_data="change_lang")])
 
@@ -225,7 +259,10 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock"),
-            InlineKeyboardButton("👑 VIP User", callback_data="vip_user")
+            InlineKeyboardButton("📢 تنظیم آیدی کانال", callback_data="set_channel_id")
+        ],
+        [
+            InlineKeyboardButton("👑 VIP User", callback_data="vip_user"),
         ],
         [
             InlineKeyboardButton("🗑️ Delete User", callback_data="delete_user"),
@@ -261,6 +298,7 @@ def strategy_list_keyboard():
         name = module.STRATEGY_INFO.get("display_name", strategy_id)
         keyboard.append([InlineKeyboardButton(name, callback_data=f"strat_view_{strategy_id}")])
 
+    keyboard.append([InlineKeyboardButton("➕ افزودن استراتژی جدید", callback_data="add_strategy_guide")])
     keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -289,7 +327,7 @@ def strategy_params_keyboard(strategy_id):
 # ============ کیبورد مدیریت دکمه‌های شیشه‌ای (پنل ادمین) ============
 def button_management_keyboard(lang='fa'):
     """لیست همه‌ی دکمه‌های قابل‌مدیریت رو با وضعیت فعلی‌شون (نمایان/مخفی) نشون می‌ده."""
-    from database import is_button_hidden, get_button_label
+    from database import is_button_hidden, get_button_label, get_all_custom_buttons
 
     keyboard = []
     for button_key, _, lang_key in MANAGEABLE_USER_BUTTONS:
@@ -298,7 +336,42 @@ def button_management_keyboard(lang='fa'):
         status = "🚫 مخفی" if is_button_hidden(button_key) else "✅ نمایان"
         keyboard.append([InlineKeyboardButton(f"{current_label} ({status})", callback_data=f"btn_manage_{button_key}")])
 
+    # ===== دکمه‌های سفارشی که قبلاً ساخته شدن =====
+    for btn in get_all_custom_buttons():
+        keyboard.append([InlineKeyboardButton(f"{btn['label']} (سفارشی)", callback_data=f"custom_manage_{btn['button_key']}")])
+
+    keyboard.append([InlineKeyboardButton("➕ افزودن دکمه‌ی جدید", callback_data="add_custom_button")])
     keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ===== عملکردهای موجود ربات که یک دکمه‌ی سفارشی می‌تونه بهشون وصل بشه =====
+LINKABLE_ACTIONS = [
+    ("signal_menu", "🚨 دریافت سیگنال"),
+    ("performance", "📊 عملکرد"),
+    ("history", "📜 تاریخچه"),
+    ("live_price", "💰 قیمت لحظه‌ای"),
+    ("vip", "💎 VIP"),
+    ("referral", "👥 رفرال"),
+    ("settings", "⚙️ تنظیمات"),
+    ("support", "🆘 پشتیبانی"),
+]
+
+
+def custom_button_type_keyboard():
+    """انتخاب می‌کنه دکمه‌ی جدید متن ثابت نشون بده یا به یکی از عملکردهای موجود وصل بشه."""
+    keyboard = [[InlineKeyboardButton("📝 متن ثابت (وقتی کلیک شد، یک پیام نشان بده)", callback_data="cbtype_text")]]
+    for action_key, action_label in LINKABLE_ACTIONS:
+        keyboard.append([InlineKeyboardButton(f"🔗 مثل: {action_label}", callback_data=f"cbtype_link_{action_key}")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def custom_button_manage_keyboard(button_key):
+    """گزینه‌های مدیریت یک دکمه‌ی سفارشی: حذف کامل."""
+    keyboard = [
+        [InlineKeyboardButton("🗑️ حذف این دکمه", callback_data=f"custom_delete_{button_key}")],
+        [InlineKeyboardButton("🔙 برگشت", callback_data="manage_buttons")]
+    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -319,9 +392,9 @@ def button_edit_keyboard(button_key):
 
 
 # ============ کیبوردهای بک‌تست (پنل ادمین) ============
-BACKTEST_MONTH_NAMES = {
-    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
-    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+BACKTEST_SYMBOLS = {
+    "gold": ("🥇 طلا (XAU/USD)", "XAU/USD"),
+    "btc": ("₿ بیت‌کوین (BTC/USD)", "BTC/USD"),
 }
 
 
@@ -339,15 +412,44 @@ def backtest_strategy_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-def backtest_month_keyboard(strategy_id, which, year):
+def backtest_symbol_keyboard(strategy_id):
+    """انتخاب نماد (طلا یا بیت‌کوین) برای بک‌تست."""
+    keyboard = []
+    for symbol_key, (label, _) in BACKTEST_SYMBOLS.items():
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"bt_symbol_{strategy_id}_{symbol_key}")])
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+BACKTEST_MONTH_NAMES = {
+    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
+    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
+}
+
+
+def backtest_year_keyboard(which):
     """
-    انتخاب ماه شروع یا پایان بک‌تست.
+    انتخاب سال شروع یا پایان بک‌تست (سال جاری و ۲ سال قبل).
+    which: 'start' یا 'end'
+    """
+    from datetime import datetime
+    current_year = datetime.now().year
+    years = [current_year - 2, current_year - 1, current_year]
+
+    keyboard = [[InlineKeyboardButton(str(y), callback_data=f"bty_{which}_{y}")] for y in years]
+    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
+    return InlineKeyboardMarkup(keyboard)
+
+
+def backtest_month_keyboard(which, year):
+    """
+    انتخاب ماه شروع یا پایان بک‌تست، برای سال مشخص‌شده.
     which: 'start' یا 'end'
     """
     keyboard = []
     row = []
     for month_num, name in BACKTEST_MONTH_NAMES.items():
-        row.append(InlineKeyboardButton(f"{name} {year}", callback_data=f"bt_{which}_{strategy_id}_{year}_{month_num:02d}"))
+        row.append(InlineKeyboardButton(name, callback_data=f"btm_{which}_{year}_{month_num:02d}"))
         if len(row) == 3:
             keyboard.append(row)
             row = []
@@ -360,10 +462,17 @@ def backtest_month_keyboard(strategy_id, which, year):
 
 # ============ چک کردن عضویت در کانال ============
 async def check_channel_membership(user_id, context):
-    if not CHANNEL_ID:
+    from database import get_setting
+
+    # ===== قفل کانال باید هم فعال باشه (از دکمه‌ی Channel Lock) و هم آیدی کانال تنظیم شده باشه =====
+    if get_setting('channel_locked') != 'true':
+        return True
+
+    channel_id = get_channel_id()
+    if not channel_id:
         return True
     try:
-        member = await context.bot.get_chat_member(chat_id=CHANNEL_ID, user_id=user_id)
+        member = await context.bot.get_chat_member(chat_id=channel_id, user_id=user_id)
         return member.status in ['member', 'administrator', 'creator']
     except Exception as e:
         logger.warning(f"خطا در بررسی عضویت کانال برای کاربر {user_id}: {e}")
@@ -436,13 +545,13 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("🔒 ربات در حال حاضر قفل است.")
         return
 
-    if CHANNEL_ID:
-        is_member = await check_channel_membership(user_id, context)
-        if not is_member:
-            await update.message.reply_text(
-                f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {CHANNEL_ID}\n\nپس از عضویت، دوباره /start را بزنید."
-            )
-            return
+    is_member = await check_channel_membership(user_id, context)
+    if not is_member:
+        channel_id = get_channel_id()
+        await update.message.reply_text(
+            f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {channel_id}\n\nپس از عضویت، دوباره /start را بزنید."
+        )
+        return
 
     # ===== فقط کاربر جدید صفحه‌ی انتخاب زبان رو می‌بینه =====
     # کاربر قدیمی مستقیم می‌ره سراغ منوی اصلی؛ برای تغییر زبان باید از
@@ -483,6 +592,34 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     user_id = query.from_user.id
+
+    # ===== دکمه‌های کاملاً سفارشی (باید همین اول پردازش بشه تا اگه به یک
+    # عملکرد موجود وصل شده، بتونه data رو عوض کنه و بقیه‌ی چک‌های پایین‌تر
+    # این تابع رو با data جدید طی کنه - مهم نیست اون عملکرد کجای تابع باشه) =====
+    if data.startswith("custom_btn_"):
+        button_key = data.replace("custom_btn_", "")
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+
+        from database import get_custom_button
+        btn = get_custom_button(button_key)
+
+        if btn and btn.get('link_action'):
+            data = btn['link_action']
+            # عمداً return نمی‌کنیم؛ پردازش با data جدید در همین تابع ادامه پیدا می‌کنه
+        elif btn:
+            await query.edit_message_text(
+                btn['response_text'],
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
+        else:
+            await query.edit_message_text(
+                get_text(lang, 'welcome_back'),
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
 
     # ===== انتخاب زبان =====
     if data.startswith("lang_"):
@@ -620,9 +757,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             signal, analysis, df = None, None, None
             elapsed = 0
             frame_index = 0
+            symbol = context.user_data.get('symbol', 'XAU/USD')
 
             while elapsed < MAX_WAIT_SECONDS:
-                df = get_gold_candles(timeframe)
+                df = get_gold_candles(timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
                     signal, analysis = create_signal(df, style)
@@ -698,10 +836,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     # ===== چک کردن عضویت در کانال =====
-    if CHANNEL_ID and user_id != ADMIN_ID:
+    if user_id != ADMIN_ID:
         is_member = await check_channel_membership(user_id, context)
         if not is_member:
-            await query.edit_message_text(f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {CHANNEL_ID}")
+            channel_id = get_channel_id()
+            await query.edit_message_text(f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {channel_id}")
             return
 
     # ===== نتیجه سیگنال =====
@@ -801,6 +940,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     # ===== منوی اصلی سیگنال =====
     if data == "signal_menu":
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        await query.edit_message_text(
+            "💱 **نماد مورد نظر را انتخاب کنید:**",
+            reply_markup=symbol_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+
+    if data.startswith("symbol_"):
+        symbol_key = data.replace("symbol_", "")
+        symbol_value = SYMBOL_OPTIONS.get(symbol_key, ("", "XAU/USD"))[1]
+        context.user_data['symbol'] = symbol_value
+
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             get_text(lang, 'select_mode'),
@@ -1026,7 +1179,24 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         status = toggle_channel_lock()
-        await query.edit_message_text(f"🔒 **قفل کانال:** {status}", reply_markup=admin_keyboard(), parse_mode='Markdown')
+        current_channel = get_channel_id()
+        note = "" if current_channel else "\n\n⚠️ توجه: هنوز آیدی کانالی تنظیم نشده، پس این قفل عملاً اثری ندارد. از دکمه‌ی «تنظیم آیدی کانال» استفاده کنید."
+        await query.edit_message_text(f"🔒 **قفل کانال:** {status}{note}", reply_markup=admin_keyboard(), parse_mode='Markdown')
+        return
+
+    if data == "set_channel_id":
+        if user_id != ADMIN_ID:
+            return
+        current_channel = get_channel_id() or "(هنوز تنظیم نشده)"
+        await query.edit_message_text(
+            f"📢 **تنظیم آیدی کانال**\n\n"
+            f"آیدی فعلی: `{current_channel}`\n\n"
+            f"آیدی جدید کانال را بفرستید (مثال: `@mychannel` یا `-1001234567890`).\n\n"
+            f"⚠️ ربات باید ادمین همان کانال باشد تا بتواند عضویت کاربران را بررسی کند.\n\n"
+            f"برای حذف قفل کانال کامل، عبارت `حذف` را بفرستید.",
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'set_channel_id'
         return
 
     # ===== مدیریت کاربران =====
@@ -1075,6 +1245,25 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         await query.edit_message_text(
             "⚙️ **مدیریت استراتژی‌ها**\n\nیک استراتژی را برای مشاهده و تنظیم پارامترهایش انتخاب کنید:",
+            reply_markup=strategy_list_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data == "add_strategy_guide":
+        if user_id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            "➕ **افزودن استراتژی جدید**\n\n"
+            "افزودن یک استراتژی کاملاً جدید (مثلاً از یک اندیکاتور TradingView) "
+            "به‌صورت خودکار از داخل ربات ممکن نیست، چون تبدیل کد Pine Script به "
+            "پایتون نیاز به بازنویسی دستی منطق آن دارد.\n\n"
+            "**برای افزودن استراتژی جدید:**\n"
+            "۱. کد کامل اسکریپت Pine Script (TradingView) را برای توسعه‌دهنده ارسال کنید.\n"
+            "۲. توسعه‌دهنده آن را به یک فایل پایتون استاندارد تبدیل کرده و در پوشه‌ی "
+            "`strategies/` قرار می‌دهد.\n"
+            "۳. پس از دیپلوی نسخه‌ی جدید، استراتژی به‌طور خودکار در همین لیست و در "
+            "دکمه‌های ربات ظاهر می‌شود - بدون نیاز به هیچ تغییر دیگری.",
             reply_markup=strategy_list_keyboard(),
             parse_mode='Markdown'
         )
@@ -1160,6 +1349,87 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
+    # ===== افزودن/مدیریت دکمه‌ی کاملاً سفارشی =====
+    if data == "add_custom_button":
+        if user_id != ADMIN_ID:
+            return
+        await query.edit_message_text(
+            "➕ **افزودن دکمه‌ی جدید**\n\n"
+            "اسم دکمه (متنی که روی دکمه نوشته می‌شود) را بفرستید:",
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'add_custom_button_label'
+        return
+
+    if data == "cbtype_text":
+        if user_id != ADMIN_ID:
+            return
+        label = context.user_data.get('new_custom_button_label')
+        if not label:
+            await query.edit_message_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            return
+        await query.edit_message_text(
+            f"✅ اسم دکمه: «{label}»\n\nحالا متنی که با کلیک روی این دکمه به کاربر نمایش داده می‌شود را بفرستید:",
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'add_custom_button_text'
+        return
+
+    if data.startswith("cbtype_link_"):
+        if user_id != ADMIN_ID:
+            return
+        action_key = data.replace("cbtype_link_", "")
+        label = context.user_data.get('new_custom_button_label')
+
+        if not label:
+            await query.edit_message_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+            return
+
+        import re
+        import time
+        slug = re.sub(r'[^a-zA-Z0-9_]', '', label.replace(' ', '_'))[:20] or "btn"
+        button_key = f"{slug}_{int(time.time())}"
+
+        from database import add_custom_button
+        add_custom_button(button_key, label, response_text=None, link_action=action_key)
+
+        await query.edit_message_text(
+            f"✅ **دکمه‌ی «{label}» ساخته شد** و دقیقاً مثل دکمه‌ی «{dict(LINKABLE_ACTIONS).get(action_key, action_key)}» عمل می‌کند.\n\nاین دکمه در منوی اصلی کاربران ظاهر می‌شود.",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("custom_manage_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("custom_manage_", "")
+        from database import get_custom_button
+        btn = get_custom_button(button_key)
+        if not btn:
+            await query.edit_message_text("❌ دکمه پیدا نشد.", reply_markup=button_management_keyboard())
+            return
+        await query.edit_message_text(
+            f"🔘 **دکمه‌ی سفارشی: {btn['label']}**\n\n"
+            f"متن پاسخ فعلی:\n{btn['response_text']}",
+            reply_markup=custom_button_manage_keyboard(button_key),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("custom_delete_"):
+        if user_id != ADMIN_ID:
+            return
+        button_key = data.replace("custom_delete_", "")
+        from database import delete_custom_button
+        delete_custom_button(button_key)
+        await query.edit_message_text(
+            "🗑️ **دکمه حذف شد.**",
+            reply_markup=button_management_keyboard(),
+            parse_mode='Markdown'
+        )
+        return
+
     if data.startswith("btn_rename_"):
         if user_id != ADMIN_ID:
             return
@@ -1215,43 +1485,81 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if user_id != ADMIN_ID:
             return
         strategy_id = data.replace("bt_strat_", "")
-        from datetime import datetime
-        current_year = datetime.now().year
         context.user_data['backtest_strategy_id'] = strategy_id
         await query.edit_message_text(
-            "📅 **ماه شروع بک‌تست را انتخاب کنید:**",
-            reply_markup=backtest_month_keyboard(strategy_id, "start", current_year),
+            "💱 **نماد مورد نظر برای بک‌تست را انتخاب کنید:**",
+            reply_markup=backtest_symbol_keyboard(strategy_id),
             parse_mode='Markdown'
         )
         return
 
-    if data.startswith("bt_start_"):
+    if data.startswith("bt_symbol_"):
         if user_id != ADMIN_ID:
             return
-        # فرمت: bt_start_{strategy_id}_{year}_{month}
-        remainder = data.replace("bt_start_", "")
-        strategy_id, year, month = remainder.rsplit("_", 2)
-        context.user_data['backtest_start_date'] = f"{year}-{month}-01"
+        # فرمت: bt_symbol_{strategy_id}_{symbol_key}
+        remainder = data.replace("bt_symbol_", "")
+        strategy_id, symbol_key = remainder.rsplit("_", 1)
+        symbol_value = BACKTEST_SYMBOLS.get(symbol_key, ("", "XAU/USD"))[1]
+
+        context.user_data['backtest_strategy_id'] = strategy_id
+        context.user_data['backtest_symbol'] = symbol_value
+
         await query.edit_message_text(
-            "📅 **ماه پایان بک‌تست را انتخاب کنید:**",
-            reply_markup=backtest_month_keyboard(strategy_id, "end", int(year)),
+            "📅 **سال شروع بک‌تست را انتخاب کنید:**",
+            reply_markup=backtest_year_keyboard("start"),
             parse_mode='Markdown'
         )
         return
 
-    if data.startswith("bt_end_"):
+    if data.startswith("bty_"):
         if user_id != ADMIN_ID:
             return
-        remainder = data.replace("bt_end_", "")
-        strategy_id, year, month = remainder.rsplit("_", 2)
+        # فرمت: bty_{which}_{year}   which: start یا end
+        remainder = data.replace("bty_", "")
+        which, year = remainder.rsplit("_", 1)
 
+        if which == "start":
+            context.user_data['backtest_start_year'] = year
+        else:
+            context.user_data['backtest_end_year'] = year
+
+        await query.edit_message_text(
+            f"📅 **ماه {'شروع' if which == 'start' else 'پایان'} بک‌تست را انتخاب کنید ({year}):**",
+            reply_markup=backtest_month_keyboard(which, year),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("btm_"):
+        if user_id != ADMIN_ID:
+            return
+        # فرمت: btm_{which}_{year}_{month}
+        remainder = data.replace("btm_", "")
+        which, year, month = remainder.rsplit("_", 2)
+
+        if which == "start":
+            context.user_data['backtest_start_date'] = f"{year}-{month}-01"
+            await query.edit_message_text(
+                "📅 **سال پایان بک‌تست را انتخاب کنید:**",
+                reply_markup=backtest_year_keyboard("end"),
+                parse_mode='Markdown'
+            )
+            return
+
+        # which == "end"
         import calendar
         last_day = calendar.monthrange(int(year), int(month))[1]
         end_date = f"{year}-{month}-{last_day:02d}"
         start_date = context.user_data.get('backtest_start_date')
+        strategy_id = context.user_data.get('backtest_strategy_id')
+        symbol = context.user_data.get('backtest_symbol', 'XAU/USD')
 
-        if not start_date:
-            await query.edit_message_text("❌ **خطا: تاریخ شروع پیدا نشد. دوباره تلاش کنید.**", reply_markup=admin_keyboard())
+        if not start_date or not strategy_id:
+            await query.edit_message_text(
+                "❌ **خطا: اطلاعات بک‌تست ناقص است. دوباره از منو شروع کنید.**",
+                reply_markup=admin_keyboard(),
+                parse_mode='Markdown'
+            )
             return
 
         from strategy_registry import get_strategy
@@ -1259,12 +1567,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         display_name = module.STRATEGY_INFO.get("display_name", strategy_id) if module else strategy_id
 
         await query.edit_message_text(
-            f"⏳ **در حال اجرای بک‌تست...**\n\n📅 {start_date} تا {end_date}\n\nاین ممکن است چند دقیقه طول بکشد.",
+            f"⏳ **در حال اجرای بک‌تست...**\n\n💱 {symbol}\n📅 {start_date} تا {end_date}\n\nاین ممکن است چند دقیقه طول بکشد.",
             parse_mode='Markdown'
         )
 
         from backtest import run_backtest, format_backtest_report
-        result = run_backtest(strategy_id, start_date, end_date, timeframe="1h")
+        result = run_backtest(strategy_id, start_date, end_date, timeframe="1h", symbol=symbol)
         report_text = format_backtest_report(result, display_name)
 
         await query.message.reply_text(report_text, reply_markup=admin_keyboard(), parse_mode='Markdown')
@@ -1425,6 +1733,75 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text(
                 f"✅ **اسم دکمه به «{text.strip()}» تغییر کرد.**",
                 reply_markup=button_edit_keyboard(button_key),
+                parse_mode='Markdown'
+            )
+            return
+
+        if action == 'set_channel_id':
+            context.user_data['admin_action'] = None
+            from database import update_setting
+
+            if text.strip() in ('حذف', 'حذف کن', 'پاک کن', 'clear', 'remove'):
+                update_setting('channel_id', '')
+                await update.message.reply_text(
+                    "✅ **آیدی کانال پاک شد.** از این پس چک عضویت کانال غیرفعال است.",
+                    reply_markup=admin_keyboard(),
+                    parse_mode='Markdown'
+                )
+                return
+
+            new_channel_id = text.strip()
+            update_setting('channel_id', new_channel_id)
+            await update.message.reply_text(
+                f"✅ **آیدی کانال به `{new_channel_id}` تنظیم شد.**\n\n"
+                f"⚠️ یادتان باشد که ربات را ادمین همان کانال کنید تا بتواند عضویت کاربران را چک کند، "
+                f"و از دکمه‌ی «Channel Lock» برای فعال کردن قفل استفاده کنید.",
+                reply_markup=admin_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+
+        if action == 'add_custom_button_label':
+            label = text.strip()
+            if not label:
+                await update.message.reply_text("❌ **اسم دکمه نمی‌تواند خالی باشد. دوباره وارد کنید:**", parse_mode='Markdown')
+                return
+
+            context.user_data['new_custom_button_label'] = label
+            context.user_data['admin_action'] = None
+            await update.message.reply_text(
+                f"✅ اسم دکمه: «{label}»\n\nاین دکمه چه کاری انجام دهد؟",
+                reply_markup=custom_button_type_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+
+        if action == 'add_custom_button_text':
+            response_text = text.strip()
+            label = context.user_data.get('new_custom_button_label')
+            context.user_data['admin_action'] = None
+
+            if not label:
+                await update.message.reply_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                return
+
+            if not response_text:
+                await update.message.reply_text("❌ **متن پاسخ نمی‌تواند خالی باشد. دوباره وارد کنید:**", parse_mode='Markdown')
+                context.user_data['admin_action'] = 'add_custom_button_text'
+                return
+
+            import re
+            import time
+            # ساخت یک شناسه‌ی یکتا از روی اسم دکمه + timestamp، برای جلوگیری از تداخل
+            slug = re.sub(r'[^a-zA-Z0-9_]', '', label.replace(' ', '_'))[:20] or "btn"
+            button_key = f"{slug}_{int(time.time())}"
+
+            from database import add_custom_button
+            add_custom_button(button_key, label, response_text)
+
+            await update.message.reply_text(
+                f"✅ **دکمه‌ی «{label}» ساخته شد و در منوی اصلی کاربران ظاهر می‌شود.**",
+                reply_markup=admin_keyboard(),
                 parse_mode='Markdown'
             )
             return
