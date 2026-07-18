@@ -102,13 +102,23 @@ def set_referral_threshold(value):
 
 # ============ داشبورد ============
 def dashboard():
+    import os
     settings = get_all_settings()
     users = get_users_count()
     active = get_active_users_today()
     today_stats = get_today_stats()
 
+    twelve_data_key = os.getenv("TWELVE_DATA")
+    if twelve_data_key:
+        key_preview = f"{twelve_data_key[:4]}...{twelve_data_key[-4:]}" if len(twelve_data_key) > 8 else "تنظیم شده"
+        api_status = f"✅ تنظیم شده ({key_preview})"
+    else:
+        api_status = "❌ تنظیم نشده - سیگنال‌ها روی داده‌ی تستی (غیرواقعی) کار می‌کنند!"
+
     return f"""
 📊 **داشبورد مدیریت**
+
+🔑 **کلید Twelve Data:** {api_status}
 
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
