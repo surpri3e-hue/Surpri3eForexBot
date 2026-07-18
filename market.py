@@ -4,9 +4,23 @@ import numpy as np
 from datetime import datetime
 import pytz
 import os
+import re
 
 TEHRAN_TZ = pytz.timezone('Asia/Tehran')
 TWELVE_DATA_KEY = os.getenv("TWELVE_DATA")
+
+
+def _sanitize_for_markdown(text):
+    """
+    متن‌هایی که از منابع خارجی (پیام خطای API، exception) میان رو قبل از
+    قرار گرفتن در یک پیام Markdown تلگرام، از کاراکترهای خاص Markdown
+    (* _ ` [ ]) پاک می‌کنه. بدون این کار، یک آندرلاین یا ستاره‌ی تصادفی
+    داخل پیام خطای API می‌تونه کل پیام تلگرام رو خراب کنه
+    ("Can't parse entities" error).
+    """
+    if not isinstance(text, str):
+        text = str(text)
+    return re.sub(r'[*_`\[\]]', '', text)
 
 
 def get_tehran_time():
@@ -123,7 +137,7 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
         else:
             # ===== پیام خطای واقعی از خود API رو استخراج می‌کنیم - نه یک پیام ژنریک =====
             api_message = data.get('message') or data.get('code') or str(data)
-            reason = f"Twelve Data برای نماد {symbol} پاسخ معتبر نداد: {api_message}"
+            reason = f"Twelve Data برای نماد {symbol} پاسخ معتبر نداد: {_sanitize_for_markdown(api_message)}"
             print(f"⚠️ {reason}")
             df = generate_test_data(timeframe, count, symbol)
             if df is not None:
@@ -131,7 +145,7 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
             return df
 
     except Exception as e:
-        reason = f"خطای اتصال به Twelve Data: {e}"
+        reason = f"خطای اتصال به Twelve Data: {_sanitize_for_markdown(str(e))}"
         print(f"❌ {reason}")
         df = generate_test_data(timeframe, count, symbol)
         if df is not None:
