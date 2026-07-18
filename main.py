@@ -523,12 +523,24 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
 👇 {get_text(lang, 'result_label')}:
 """
 
-    await bot.send_message(
-        chat_id=chat_id,
-        text=message,
-        reply_markup=signal_result_keyboard(trade_id, lang),
-        parse_mode='Markdown'
-    )
+    try:
+        await bot.send_message(
+            chat_id=chat_id,
+            text=message,
+            reply_markup=signal_result_keyboard(trade_id, lang),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        # ===== محافظت نهایی: اگر به هر دلیلی (مثلاً یک کاراکتر خاص که از
+        # این تابع فرار کرده) پارس Markdown شکست خورد، پیام را بدون
+        # فرمت‌دهی (متن ساده) دوباره می‌فرستیم تا کاربر حداقل سیگنال را
+        # از دست ندهد. =====
+        logger.warning(f"ارسال پیام سیگنال با Markdown ناموفق بود، تلاش دوباره بدون فرمت‌دهی: {e}")
+        await bot.send_message(
+            chat_id=chat_id,
+            text=message.replace('*', '').replace('_', '').replace('`', ''),
+            reply_markup=signal_result_keyboard(trade_id, lang)
+        )
 
 
 # ============ دستور /start ============
