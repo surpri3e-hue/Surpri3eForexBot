@@ -131,6 +131,15 @@ def symbol_keyboard(lang='fa'):
     return InlineKeyboardMarkup(keyboard)
 
 
+def live_price_symbol_keyboard(lang='fa'):
+    """انتخاب نماد مخصوص دکمه‌ی «قیمت لحظه‌ای» - مستقل از مسیر دریافت سیگنال."""
+    keyboard = []
+    for key, (label, _) in SYMBOL_OPTIONS.items():
+        keyboard.append([InlineKeyboardButton(label, callback_data=f"liveprice_symbol_{key}")])
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")])
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ============ کیبورد تایم‌فریم برای Standard Mode (بدون 1min) ============
 def timeframe_keyboard_standard(lang='fa'):
     keyboard = [
@@ -222,17 +231,6 @@ def user_keyboard(lang='fa'):
 
 
 # ============ کیبورد نتیجه سیگنال ============
-def signal_result_keyboard(trade_id, lang='fa'):
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(lang, 'tp_btn'), callback_data=f"tp_{trade_id}"),
-            InlineKeyboardButton(get_text(lang, 'sl_btn'), callback_data=f"sl_{trade_id}")
-        ],
-        [InlineKeyboardButton(get_text(lang, 'cancel_btn'), callback_data=f"cancel_{trade_id}")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
 # ============ کیبورد ادمین ============
 def admin_keyboard():
     keyboard = [
@@ -480,20 +478,22 @@ async def check_channel_membership(user_id, context):
 
 
 # ============ ارسال سیگنال ============
-async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD'):
-    current_price = get_current_price(symbol)
+async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD', current_price=None):
+    if current_price is None:
+        current_price = get_current_price(symbol)
     tehran_time = get_tehran_time()
 
     if not current_price:
         current_price = df['Close'].iloc[-1]
 
-    # ===== از entry/sl/tp که خود استراتژی (zigzag_logic) محاسبه کرده استفاده می‌کنیم =====
-    # این مقادیر قبلاً با در نظر گرفتن نقطه‌ی چرخش و RR اختصاصی کاربر
-    # به‌درستی و سازگار محاسبه شدن؛ نباید اینجا دوباره با یک ریسک ثابت
-    # (که باعث ناسازگاری با تحلیل واقعی می‌شد) بازنویسی بشن.
+    # ===== entry/sl/tp از قبل (قبل از save_trade) با قیمت لحظه‌ای به‌روز شدن =====
+    # اینجا دیگه نیازی به محاسبه‌ی دوباره نیست - از مقادیر نهایی که در
+    # دیتابیس هم ذخیره شدن استفاده می‌کنیم تا پیام و رکورد دیتابیس همیشه
+    # دقیقاً یکی باشن.
     entry = signal['entry']
     sl = signal['sl']
     tp = signal['tp']
+
     rr_ratio = get_user_rr(user_id)
 
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
@@ -520,14 +520,13 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
 💰 **{get_text(lang, 'price_label')}:** {current_price:.2f}
 🕐 **{get_text(lang, 'time_label')}:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
 
-👇 {get_text(lang, 'result_label')}:
+ℹ️ نتیجه‌ی این معامله (TP/SL) به‌صورت خودکار بررسی و اطلاع‌رسانی می‌شود.
 """
 
     try:
         await bot.send_message(
             chat_id=chat_id,
             text=message,
-            reply_markup=signal_result_keyboard(trade_id, lang),
             parse_mode='Markdown'
         )
     except Exception as e:
@@ -538,8 +537,7 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
         logger.warning(f"ارسال پیام سیگنال با Markdown ناموفق بود، تلاش دوباره بدون فرمت‌دهی: {e}")
         await bot.send_message(
             chat_id=chat_id,
-            text=message.replace('*', '').replace('_', '').replace('`', ''),
-            reply_markup=signal_result_keyboard(trade_id, lang)
+            text=message.replace('*', '').replace('_', '').replace('`', '')
         )
 
 
@@ -795,7 +793,28 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if df is not None and not df.empty:
                 if signal:
                     strength = signal.get('strength', 'NORMAL')
-                    trade_id = save_trade(signal, user_id, style, strength)
+
+                    # ===== به‌روزرسانی entry/sl/tp با قیمت لحظه‌ای واقعی قبل از ذخیره =====
+                    # این کار باید قبل از save_trade انجام بشه، وگرنه دیتابیس (و چک
+                    # خودکار TP/SL) با اعداد قدیمی کار می‌کنه که با چیزی که به
+                    # کاربر نشون داده می‌شه فرق داره.
+                    live_price = get_current_price(symbol)
+                    if not live_price:
+                        live_price = df['Close'].iloc[-1]
+
+                    risk_distance = abs(signal['entry'] - signal['sl'])
+                    reward_distance = abs(signal['tp'] - signal['entry'])
+                    new_entry = round(float(live_price), 2)
+
+                    if signal['direction'] == 'BUY':
+                        signal['sl'] = round(new_entry - risk_distance, 2)
+                        signal['tp'] = round(new_entry + reward_distance, 2)
+                    else:
+                        signal['sl'] = round(new_entry + risk_distance, 2)
+                        signal['tp'] = round(new_entry - reward_distance, 2)
+                    signal['entry'] = new_entry
+
+                    trade_id = save_trade(signal, user_id, style, strength, symbol=symbol)
                     use_signal(user_id)
                     record_signal_time(user_id, timeframe)  # ثبت زمان برای cooldown بعدی
 
@@ -805,7 +824,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
 
-                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol)
+                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price)
                 else:
                     try:
                         await query.message.delete()
@@ -856,38 +875,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text(f"🔒 برای استفاده از ربات باید عضو کانال ما شوید:\n\n📢 {channel_id}")
             return
 
-    # ===== نتیجه سیگنال =====
-    if data.startswith("tp_"):
-        trade_id = data.split("_", 1)[1]
-        update_result(trade_id, "TP")
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'tp_registered'),
-            reply_markup=user_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("sl_"):
-        trade_id = data.split("_", 1)[1]
-        update_result(trade_id, "SL")
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'sl_registered'),
-            reply_markup=user_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("cancel_"):
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'canceled'),
-            reply_markup=user_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
     # ===== برگشت =====
     if data == "back":
         context.user_data['admin_action'] = None
@@ -913,7 +900,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ===== قیمت لحظه‌ای =====
     if data == "live_price":
         lang = context.user_data.get('lang') or get_user_lang(user_id)
-        symbol = context.user_data.get('symbol', 'XAU/USD')
+        await query.edit_message_text(
+            "💱 **نماد مورد نظر برای دیدن قیمت لحظه‌ای را انتخاب کنید:**",
+            reply_markup=live_price_symbol_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("liveprice_symbol_"):
+        symbol_key = data.replace("liveprice_symbol_", "")
+        symbol = SYMBOL_OPTIONS.get(symbol_key, ("", "XAU/USD"))[1]
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(get_text(lang, 'fetching_price'), parse_mode='Markdown')
 
         try:
@@ -922,7 +919,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
             if price:
                 await query.edit_message_text(
-                    get_text(lang, 'price_result').format(price=price, time=tehran_time.strftime('%H:%M:%S')),
+                    f"💱 **{symbol}**\n\n" + get_text(lang, 'price_result').format(price=price, time=tehran_time.strftime('%H:%M:%S')),
                     reply_markup=user_keyboard(lang),
                     parse_mode='Markdown'
                 )
