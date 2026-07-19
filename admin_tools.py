@@ -54,22 +54,6 @@ def set_daily_signal_limit(value):
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
 
-def set_rr_ratio(value):
-    """
-    ⚠️ این فقط RR پیش‌فرض برای کاربرهای تازه‌وارد رو تغییر می‌ده.
-    هر کاربر موجود می‌تونه RR اختصاصی خودش رو با انتخاب دکمه در ربات ست کنه
-    (ذخیره می‌شه در ستون rr_ratio جدول users - نه اینجا).
-    """
-    try:
-        value = float(value)
-        if value <= 0:
-            return "❌ مقدار باید بزرگتر از صفر باشد."
-        update_setting('rr_ratio', str(value))
-        return f"✅ نسبت RR پیش‌فرض (برای کاربران جدید) به 1:{value} تغییر کرد."
-    except Exception:
-        return "❌ لطفاً یک عدد معتبر وارد کنید."
-
-
 def set_default_timeframe(value):
     if value not in ['1min', '5min', '15min', '1h', '4h', '1d']:
         return "❌ تایم‌فریم نامعتبر"
@@ -78,26 +62,23 @@ def set_default_timeframe(value):
 
 
 # ============ سیستم رفرال ============
-def set_referral_bonus(value):
+def set_referral_step(step_count, step_bonus):
+    """
+    تنظیم یکجای قانون رفرال: هر «step_count» نفر رفرال، «step_bonus»
+    سیگنال اضافه به سقف روزانه‌ی کاربر اضافه می‌شه.
+    (جایگزین دو تنظیم جدای قبلی referral_bonus/referral_threshold که
+    گیج‌کننده بودن؛ الان یک پنل واحد و روشن.)
+    """
     try:
-        value = int(value)
-        if value <= 0:
-            return "❌ مقدار باید بزرگتر از صفر باشد."
-        update_setting('referral_bonus', str(value))
-        return f"✅ پاداش هر رفرال: {value} سیگنال اضافی"
+        step_count = int(step_count)
+        step_bonus = int(step_bonus)
+        if step_count <= 0 or step_bonus <= 0:
+            return "❌ هر دو مقدار باید بزرگتر از صفر باشند."
+        update_setting('referral_step_count', str(step_count))
+        update_setting('referral_step_bonus', str(step_bonus))
+        return f"✅ قانون رفرال تنظیم شد: هر {step_count} نفر رفرال ⇽ {step_bonus} سیگنال اضافه"
     except Exception:
-        return "❌ لطفاً یک عدد معتبر وارد کنید."
-
-
-def set_referral_threshold(value):
-    try:
-        value = int(value)
-        if value <= 0:
-            return "❌ مقدار باید بزرگتر از صفر باشد."
-        update_setting('referral_threshold', str(value))
-        return f"✅ آستانه رفرال: {value}"
-    except Exception:
-        return "❌ لطفاً یک عدد معتبر وارد کنید."
+        return "❌ لطفاً دو عدد معتبر وارد کنید (مثال: 5,3)."
 
 
 # ============ داشبورد ============
@@ -123,7 +104,6 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
-🎯 **نسبت RR پیش‌فرض:** 1:{settings.get('rr_ratio', '2')} (هر کاربر می‌تواند مقدار خودش را داشته باشد)
 ⏱️ **تایم‌فریم:** {settings.get('default_timeframe', '1h')}
 
 🔒 **وضعیت ربات:** {'🔒 قفل' if settings.get('bot_locked') == 'true' else '🔓 باز'}
@@ -136,8 +116,7 @@ def dashboard():
 • SL ثبت شده: {today_stats['sl_count']}
 
 🔄 **سیستم رفرال:**
-• پاداش: {settings.get('referral_bonus', '1')} سیگنال
-• آستانه: {settings.get('referral_threshold', '5')} رفرال
+• هر {settings.get('referral_step_count', '5')} نفر رفرال ⇽ {settings.get('referral_step_bonus', '3')} سیگنال اضافه
 
 📡 **آخرین بروزرسانی:** {datetime.now(TEHRAN_TZ).strftime('%Y-%m-%d %H:%M')}
 """
