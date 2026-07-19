@@ -78,9 +78,15 @@ def get_strategy(strategy_id):
     return get_all_strategies().get(strategy_id)
 
 
-def run_strategy(strategy_id, df):
+def run_strategy(strategy_id, df, rr_override=None):
     """
     تحلیل رو با استراتژی مشخص‌شده اجرا می‌کنه.
+
+    rr_override: اگه مقدار داده بشه (RR اختصاصی خود کاربر)، به‌جای RR
+    سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه. این‌طوری
+    SL/TP نهایی که به کاربر نشون داده می‌شه، دقیقاً با RR ای که خودش
+    از پنل تنظیمات انتخاب کرده هم‌خوانی داره.
+
     خروجی: (signal, analysis) یا (None, None) اگه استراتژی پیدا نشه یا خطا بده.
     """
     module = get_strategy(strategy_id)
@@ -89,6 +95,9 @@ def run_strategy(strategy_id, df):
         return None, None
 
     try:
+        return module.analyze(df, rr_override=rr_override)
+    except TypeError:
+        # ===== سازگاری با استراتژی‌های قدیمی‌تر که هنوز rr_override رو نمی‌پذیرن =====
         return module.analyze(df)
     except Exception as e:
         logger.exception(f"خطا در اجرای استراتژی '{strategy_id}': {e}")
