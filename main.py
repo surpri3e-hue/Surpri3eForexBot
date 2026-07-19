@@ -33,7 +33,6 @@ from database import (
     update_activity,
     get_users_count,
     get_all_users,
-    set_user_vip,
     delete_user,
     reset_daily_signals,
     get_user_signals_left,
@@ -49,7 +48,19 @@ from database import (
     check_signal_cooldown,
     record_signal_time,
     get_user_winrate_stats,
-    user_exists
+    get_user_pnl_stats,
+    user_exists,
+    VIP_PLANS,
+    set_user_vip_plan,
+    get_user_vip_status,
+    set_user_phone,
+    get_user_phone,
+    create_vip_payment_request,
+    get_vip_payment_request,
+    update_vip_payment_status,
+    get_pending_vip_requests,
+    set_vip_card_info,
+    get_vip_card_info,
 )
 
 from settings import init_settings, get_settings
@@ -59,10 +70,8 @@ from admin_tools import (
     toggle_bot_lock,
     toggle_channel_lock,
     set_daily_signal_limit,
-    set_rr_ratio,
     set_default_timeframe,
-    set_referral_bonus,
-    set_referral_threshold,
+    set_referral_step,
     report
 )
 
@@ -233,6 +242,9 @@ def user_keyboard(lang='fa'):
 # ============ کیبورد نتیجه سیگنال ============
 # ============ کیبورد ادمین ============
 def admin_keyboard():
+    pending_count = len(get_pending_vip_requests())
+    vip_requests_label = f"🧾 درخواست‌های VIP ({pending_count})" if pending_count else "🧾 درخواست‌های VIP"
+
     keyboard = [
         [InlineKeyboardButton("📊 Dashboard", callback_data="dashboard")],
         [
@@ -241,26 +253,28 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton("📊 Set Daily Signal", callback_data="set_daily_signal"),
-            InlineKeyboardButton("🎯 Set Default RR", callback_data="set_rr")
+            InlineKeyboardButton("⏱️ Set Timeframe", callback_data="set_timeframe")
         ],
         [
-            InlineKeyboardButton("⏱️ Set Timeframe", callback_data="set_timeframe"),
-            InlineKeyboardButton("👥 Referral Bonus", callback_data="set_referral_bonus")
+            InlineKeyboardButton("🔄 قانون رفرال", callback_data="set_referral_step")
         ],
         [
-            InlineKeyboardButton("🎯 Referral Threshold", callback_data="set_referral_threshold"),
-            InlineKeyboardButton("🔄 Reset Signals", callback_data="reset_signals")
-        ],
-        [
+            InlineKeyboardButton("🔄 Reset Signals", callback_data="reset_signals"),
             InlineKeyboardButton("🔒 Bot Lock", callback_data="bot_lock"),
-            InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control")
         ],
         [
+            InlineKeyboardButton("🚀 Signal Control", callback_data="signal_control"),
             InlineKeyboardButton("🔒 Channel Lock", callback_data="channel_lock"),
+        ],
+        [
             InlineKeyboardButton("📢 تنظیم آیدی کانال", callback_data="set_channel_id")
         ],
         [
-            InlineKeyboardButton("👑 VIP User", callback_data="vip_user"),
+            InlineKeyboardButton("👑 مدیریت VIP", callback_data="vip_admin_menu"),
+            InlineKeyboardButton(vip_requests_label, callback_data="vip_requests_list"),
+        ],
+        [
+            InlineKeyboardButton("💳 شماره کارت VIP", callback_data="set_vip_card"),
         ],
         [
             InlineKeyboardButton("🗑️ Delete User", callback_data="delete_user"),
@@ -268,7 +282,7 @@ def admin_keyboard():
         ],
         [InlineKeyboardButton("📊 Reports", callback_data="reports")],
         [InlineKeyboardButton("⚙️ مدیریت استراتژی‌ها", callback_data="manage_strategies")],
-        [InlineKeyboardButton("🔘 مدیریت دکمه‌ها", callback_data="manage_buttons")],
+        [InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="rename_buttons_menu")],
         [InlineKeyboardButton("📉 بک‌تست استراتژی", callback_data="backtest_menu")],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
@@ -281,6 +295,26 @@ def referral_keyboard(user_id, lang='fa'):
     keyboard = [
         [InlineKeyboardButton(get_text(lang, 'copy_link'), url=link)],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+# ============ کیبورد پلن‌های VIP ============
+def vip_plans_keyboard(lang='fa'):
+    keyboard = [
+        [InlineKeyboardButton(get_text(lang, 'vip_plan_btn_1m'), callback_data="vip_plan_1m")],
+        [InlineKeyboardButton(get_text(lang, 'vip_plan_btn_3m'), callback_data="vip_plan_3m")],
+        [InlineKeyboardButton(get_text(lang, 'vip_plan_btn_6m'), callback_data="vip_plan_6m")],
+        [InlineKeyboardButton(get_text(lang, 'vip_plan_btn_12m'), callback_data="vip_plan_12m")],
+        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
+
+
+def vip_paid_keyboard(lang='fa'):
+    keyboard = [
+        [InlineKeyboardButton(get_text(lang, 'vip_paid_btn'), callback_data="vip_paid_confirm")],
+        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="vip")]
     ]
     return InlineKeyboardMarkup(keyboard)
 
@@ -322,23 +356,28 @@ def strategy_params_keyboard(strategy_id):
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد مدیریت دکمه‌های شیشه‌ای (پنل ادمین) ============
-def button_management_keyboard(lang='fa'):
-    """لیست همه‌ی دکمه‌های قابل‌مدیریت رو با وضعیت فعلی‌شون (نمایان/مخفی) نشون می‌ده."""
-    from database import is_button_hidden, get_button_label, get_all_custom_buttons
+# ============ کیبورد تغییر نام دکمه‌ها (پنل ادمین) ============
+# ⚠️ این پنل جایگزین پنل قدیمی «مدیریت دکمه‌ها» شد که هم مخفی/نمایان
+# کردن، هم تغییر اسم، هم بازگشت به پیش‌فرض رو با هم قاطی داشت. طبق
+# تصمیم پروژه، الان این پنل فقط و فقط «تغییر اسم» دکمه‌های اصلی رو انجام
+# می‌ده - ساده و بدون ابهام. قابلیت مخفی/نمایان‌کردن حذف شد.
+def rename_buttons_keyboard(lang='fa'):
+    """لیست همه‌ی دکمه‌های اصلی رو با اسم فعلی‌شون نشون می‌ده - کلیک روی هرکدام مستقیم رفتن به گرفتن اسم جدید."""
+    from database import get_button_label
 
     keyboard = []
     for button_key, _, lang_key in MANAGEABLE_USER_BUTTONS:
         default_label = get_text(lang, lang_key)
         current_label = get_button_label(button_key, default_label)
-        status = "🚫 مخفی" if is_button_hidden(button_key) else "✅ نمایان"
-        keyboard.append([InlineKeyboardButton(f"{current_label} ({status})", callback_data=f"btn_manage_{button_key}")])
+        keyboard.append([InlineKeyboardButton(f"✏️ {current_label}", callback_data=f"btn_rename_{button_key}")])
 
-    # ===== دکمه‌های سفارشی که قبلاً ساخته شدن =====
+    keyboard.append([InlineKeyboardButton("➕ افزودن دکمه‌ی سفارشی جدید", callback_data="add_custom_button")])
+
+    # ===== دکمه‌های سفارشی موجود - فقط برای حذف (تغییر اسم برای این‌ها معنی نداره چون خودش قابل تعریفه) =====
+    from database import get_all_custom_buttons
     for btn in get_all_custom_buttons():
-        keyboard.append([InlineKeyboardButton(f"{btn['label']} (سفارشی)", callback_data=f"custom_manage_{btn['button_key']}")])
+        keyboard.append([InlineKeyboardButton(f"🗑️ حذف: {btn['label']}", callback_data=f"custom_delete_{btn['button_key']}")])
 
-    keyboard.append([InlineKeyboardButton("➕ افزودن دکمه‌ی جدید", callback_data="add_custom_button")])
     keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
     return InlineKeyboardMarkup(keyboard)
 
@@ -361,31 +400,6 @@ def custom_button_type_keyboard():
     keyboard = [[InlineKeyboardButton("📝 متن ثابت (وقتی کلیک شد، یک پیام نشان بده)", callback_data="cbtype_text")]]
     for action_key, action_label in LINKABLE_ACTIONS:
         keyboard.append([InlineKeyboardButton(f"🔗 مثل: {action_label}", callback_data=f"cbtype_link_{action_key}")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def custom_button_manage_keyboard(button_key):
-    """گزینه‌های مدیریت یک دکمه‌ی سفارشی: حذف کامل."""
-    keyboard = [
-        [InlineKeyboardButton("🗑️ حذف این دکمه", callback_data=f"custom_delete_{button_key}")],
-        [InlineKeyboardButton("🔙 برگشت", callback_data="manage_buttons")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-def button_edit_keyboard(button_key):
-    """گزینه‌های ویرایش یک دکمه‌ی خاص: تغییر اسم، مخفی/نمایان کردن، بازگشت به پیش‌فرض."""
-    from database import is_button_hidden
-
-    hidden = is_button_hidden(button_key)
-    toggle_label = "✅ نمایان کردن" if hidden else "🚫 مخفی کردن"
-
-    keyboard = [
-        [InlineKeyboardButton("✏️ تغییر اسم", callback_data=f"btn_rename_{button_key}")],
-        [InlineKeyboardButton(toggle_label, callback_data=f"btn_toggle_{button_key}")],
-        [InlineKeyboardButton("🔄 بازگشت به پیش‌فرض", callback_data=f"btn_reset_{button_key}")],
-        [InlineKeyboardButton("🔙 برگشت", callback_data="manage_buttons")]
-    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -478,7 +492,7 @@ async def check_channel_membership(user_id, context):
 
 
 # ============ ارسال سیگنال ============
-async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD', current_price=None):
+async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD', current_price=None, mode='standard'):
     if current_price is None:
         current_price = get_current_price(symbol)
     tehran_time = get_tehran_time()
@@ -494,7 +508,8 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
     sl = signal['sl']
     tp = signal['tp']
 
-    rr_ratio = get_user_rr(user_id)
+    # ===== RR جدا برای هر مود (رفع باگ اشتراک RR بین Standard/Fast Scalp) =====
+    rr_ratio = get_user_rr(user_id, mode=mode)
 
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
     style = analysis.get('style', 'Surpri3e Strategy')
@@ -700,12 +715,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب RR (اختصاصی همین کاربر) =====
+    # ===== انتخاب RR (اختصاصی همین کاربر و همین مود - رفع باگ اشتراک RR) =====
     if data.startswith("rr_"):
         rr = int(data.replace("rr_", ""))
         rr = max(1, min(10, rr))
 
-        set_user_rr(user_id, rr)  # ✅ per-user، نه سراسری
+        mode = context.user_data.get('mode', 'standard')
+        set_user_rr(user_id, rr, mode=mode)  # ✅ per-user و per-mode، نه سراسری و نه مشترک بین مودها
         context.user_data['rr'] = rr
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
@@ -770,11 +786,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elapsed = 0
             frame_index = 0
 
+            # ===== مود فعلی کاربر (Standard یا Fast Scalp) - برای RR اختصاصی همون مود =====
+            mode = context.user_data.get('mode', 'standard')
+            user_rr = get_user_rr(user_id, mode=mode)
+
             while elapsed < MAX_WAIT_SECONDS:
                 df = get_gold_candles(timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
-                    signal, analysis = create_signal(df, style)
+                    signal, analysis = create_signal(df, style, rr_override=user_rr)
                     if signal:
                         break  # سیگنال معتبر پیدا شد - از حلقه خارج شو
 
@@ -824,7 +844,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
 
-                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price)
+                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price, mode=mode)
                 else:
                     try:
                         await query.message.delete()
@@ -996,14 +1016,15 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_user_winrate_stats(user_id)
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         w = stats['weekly']
-        back_keyboard = InlineKeyboardMarkup([
+        keyboard = [
+            [InlineKeyboardButton(get_text(lang, 'pnl_calc_btn'), callback_data="pnl_calc_weekly")],
             [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="performance")]
-        ])
+        ]
         await query.edit_message_text(
             get_text(lang, 'weekly_performance_text').format(
                 total=w['total'], wins=w['wins'], losses=w['losses'], winrate=w['winrate']
             ),
-            reply_markup=back_keyboard,
+            reply_markup=InlineKeyboardMarkup(keyboard),
             parse_mode='Markdown'
         )
         return
@@ -1013,14 +1034,27 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         stats = get_user_winrate_stats(user_id)
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         m = stats['monthly']
-        back_keyboard = InlineKeyboardMarkup([
+        keyboard = [
+            [InlineKeyboardButton(get_text(lang, 'pnl_calc_btn'), callback_data="pnl_calc_monthly")],
             [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="performance")]
-        ])
+        ]
         await query.edit_message_text(
             get_text(lang, 'monthly_performance_text').format(
                 total=m['total'], wins=m['wins'], losses=m['losses'], winrate=m['winrate']
             ),
-            reply_markup=back_keyboard,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== محاسبه‌ی سود/زیان بر اساس درصد ریسک ثابت کاربر =====
+    if data == "pnl_calc_weekly" or data == "pnl_calc_monthly":
+        period = 'weekly' if data == "pnl_calc_weekly" else 'monthly'
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        context.user_data['admin_action'] = 'pnl_awaiting_risk'
+        context.user_data['pnl_period'] = period
+        await query.edit_message_text(
+            get_text(lang, 'pnl_ask_risk'),
             parse_mode='Markdown'
         )
         return
@@ -1043,8 +1077,58 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "vip":
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'vip_text'),
-            reply_markup=user_keyboard(lang),
+            get_text(lang, 'vip_intro_text'),
+            reply_markup=vip_plans_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("vip_plan_"):
+        plan_id = data.replace("vip_plan_", "")
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+
+        if plan_id not in VIP_PLANS:
+            return
+
+        card_info = get_vip_card_info()
+        if not card_info['card_number']:
+            await query.edit_message_text(
+                get_text(lang, 'vip_card_not_set'),
+                reply_markup=vip_plans_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
+
+        context.user_data['vip_selected_plan'] = plan_id
+        plan = VIP_PLANS[plan_id]
+        card_holder_line = f"👤 {card_info['card_holder']}" if card_info['card_holder'] else ""
+
+        await query.edit_message_text(
+            get_text(lang, 'vip_payment_card_text').format(
+                plan=plan['label'],
+                price=plan['price_toman'],
+                card_number=card_info['card_number'],
+                card_holder_line=card_holder_line
+            ),
+            reply_markup=vip_paid_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data == "vip_paid_confirm":
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+        if not context.user_data.get('vip_selected_plan'):
+            # ===== اگه کاربر بدون انتخاب پلن به این مرحله رسیده (مثلاً بعد از ری‌استارت ربات) =====
+            await query.edit_message_text(
+                get_text(lang, 'vip_intro_text'),
+                reply_markup=vip_plans_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            return
+
+        context.user_data['admin_action'] = 'vip_awaiting_phone'
+        await query.edit_message_text(
+            get_text(lang, 'vip_ask_phone'),
             parse_mode='Markdown'
         )
         return
@@ -1053,15 +1137,30 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "settings":
         settings = get_settings()
         lang = context.user_data.get('lang') or get_user_lang(user_id)
-        rr = get_user_rr(user_id)
+        rr_standard = get_user_rr(user_id, mode='standard')
+        rr_scalp = get_user_rr(user_id, mode='fast_scalp')
         style = context.user_data.get('style') or get_user_style(user_id)
+        signals_left = get_user_signals_left(user_id)
+
+        vip_status = get_user_vip_status(user_id)
+        if vip_status['is_vip']:
+            vip_line = get_text(lang, 'vip_status_active').format(
+                plan=vip_status['plan_label'] or '—',
+                days_left=vip_status['days_left'] if vip_status['days_left'] is not None else '∞'
+            )
+        else:
+            vip_line = get_text(lang, 'vip_status_none')
+
         await query.edit_message_text(
             get_text(lang, 'settings_text').format(
                 timeframe=settings.get('default_timeframe', '5min'),
                 status='🟢 ' + get_text(lang, 'online') if settings.get('status', True) else '🔴 ' + get_text(lang, 'offline'),
-                rr=rr,
+                rr_standard=rr_standard,
+                rr_scalp=rr_scalp,
                 style=style,
-                lang=lang
+                lang=lang,
+                signals_left=signals_left,
+                vip_line=vip_line
             ),
             reply_markup=user_keyboard(lang),
             parse_mode='Markdown'
@@ -1073,6 +1172,12 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     # ============================================
 
     if data == "dashboard":
+        if user_id != ADMIN_ID:
+            return
+        await query.edit_message_text(dashboard(), reply_markup=admin_keyboard(), parse_mode='Markdown')
+        return
+
+    if data == "admin_back":
         if user_id != ADMIN_ID:
             return
         await query.edit_message_text(dashboard(), reply_markup=admin_keyboard(), parse_mode='Markdown')
@@ -1120,17 +1225,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'set_daily_signal'
         return
 
-    if data == "set_rr":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "🎯 **نسبت RR پیش‌فرض (برای کاربران جدید)**\n\nعدد را وارد کنید (مثلاً 2 برای 1:2):",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'set_rr'
-        return
-
     if data == "set_timeframe":
         if user_id != ADMIN_ID:
             return
@@ -1142,26 +1236,20 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'set_timeframe'
         return
 
-    if data == "set_referral_bonus":
+    if data == "set_referral_step":
         if user_id != ADMIN_ID:
             return
+        current_count = get_setting('referral_step_count') or '5'
+        current_bonus = get_setting('referral_step_bonus') or '3'
         await query.edit_message_text(
-            "👥 **پاداش رفرال**\n\nچند سیگنال به ازای هر رفرال؟ (مثال: 1)",
+            f"🔄 **قانون رفرال**\n\n"
+            f"فعلی: هر {current_count} نفر رفرال ⇽ {current_bonus} سیگنال اضافه\n\n"
+            f"دو عدد رو با کاما بفرست: `تعداد_رفرال,تعداد_سیگنال_اضافه`\n"
+            f"مثال: `5,3` یعنی هر ۵ نفر رفرال، ۳ سیگنال اضافه به سقف روزانه اضافه بشه.",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
-        context.user_data['admin_action'] = 'set_referral_bonus'
-        return
-
-    if data == "set_referral_threshold":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "🎯 **آستانه رفرال**\n\nچند رفرال = افزایش سیگنال؟ (مثال: 5)",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'set_referral_threshold'
+        context.user_data['admin_action'] = 'set_referral_step'
         return
 
     # ===== کنترل‌ها =====
@@ -1210,16 +1298,172 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'set_channel_id'
         return
 
-    # ===== مدیریت کاربران =====
-    if data == "vip_user":
+    # ===== مدیریت VIP =====
+    if data == "vip_admin_menu":
         if user_id != ADMIN_ID:
             return
+        keyboard = [
+            [InlineKeyboardButton("➕ VIP کردن دستی کاربر", callback_data="vip_user_manual")],
+            [InlineKeyboardButton("🔙 برگشت", callback_data="admin_back")]
+        ]
         await query.edit_message_text(
-            "👑 **VIP کردن کاربر**\n\nآیدی عددی کاربر را وارد کنید:",
+            "👑 **مدیریت VIP**\n\n"
+            "برای تایید پرداخت‌های ارسالی کاربران از «درخواست‌های VIP» در منوی اصلی ادمین استفاده کن.\n"
+            "برای VIP کردن دستی (بدون فرآیند پرداخت) از گزینه‌ی زیر استفاده کن.",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data == "vip_user_manual":
+        if user_id != ADMIN_ID:
+            return
+        plan_lines = "\n".join(f"`{pid}` = {p['label']}" for pid, p in VIP_PLANS.items())
+        await query.edit_message_text(
+            f"👑 **VIP کردن دستی کاربر**\n\n"
+            f"فرمت: `آیدی,پلن`\n\n"
+            f"پلن‌های معتبر:\n{plan_lines}\n\n"
+            f"مثال: `123456789,3m`",
             reply_markup=admin_keyboard(),
             parse_mode='Markdown'
         )
-        context.user_data['admin_action'] = 'vip_user'
+        context.user_data['admin_action'] = 'vip_user_manual'
+        return
+
+    if data == "set_vip_card":
+        if user_id != ADMIN_ID:
+            return
+        card_info = get_vip_card_info()
+        current = card_info['card_number'] or "(هنوز تنظیم نشده)"
+        holder = card_info['card_holder'] or ""
+        await query.edit_message_text(
+            f"💳 **شماره کارت VIP**\n\n"
+            f"فعلی: `{current}` {('- ' + holder) if holder else ''}\n\n"
+            f"شماره کارت جدید رو بفرست. اگه می‌خوای نام صاحب کارت هم ثبت بشه،"
+            f" با کاما بعدش بنویس.\nمثال: `6037-XXXX-XXXX-XXXX,علی رضایی`",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'set_vip_card'
+        return
+
+    if data == "vip_requests_list":
+        if user_id != ADMIN_ID:
+            return
+        pending = get_pending_vip_requests()
+        if not pending:
+            await query.edit_message_text(
+                "🧾 **درخواست‌های VIP**\n\nدرخواست در انتظاری وجود ندارد.",
+                reply_markup=admin_keyboard(),
+                parse_mode='Markdown'
+            )
+            return
+
+        keyboard = []
+        for req in pending[:20]:
+            plan_label = VIP_PLANS.get(req['plan_id'], {}).get('label', req['plan_id'])
+            keyboard.append([InlineKeyboardButton(
+                f"#{req['id']} · {req['user_id']} · {plan_label}",
+                callback_data=f"vip_req_view_{req['id']}"
+            )])
+        keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="admin_back")])
+
+        await query.edit_message_text(
+            f"🧾 **درخواست‌های VIP در انتظار ({len(pending)})**\n\nروی هرکدام بزن برای مشاهده‌ی جزئیات و رسید:",
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+        return
+
+    if data.startswith("vip_req_view_"):
+        if user_id != ADMIN_ID:
+            return
+        request_id = int(data.replace("vip_req_view_", ""))
+        req = get_vip_payment_request(request_id)
+        if not req:
+            await query.edit_message_text("❌ این درخواست پیدا نشد.", reply_markup=admin_keyboard())
+            return
+
+        plan_label = VIP_PLANS.get(req['plan_id'], {}).get('label', req['plan_id'])
+        keyboard = [
+            [
+                InlineKeyboardButton("✅ تایید و VIP کن", callback_data=f"vip_req_approve_{request_id}"),
+                InlineKeyboardButton("❌ رد کن", callback_data=f"vip_req_reject_{request_id}"),
+            ],
+            [InlineKeyboardButton("🔙 برگشت", callback_data="vip_requests_list")]
+        ]
+
+        caption = (
+            f"🧾 **درخواست #{request_id}**\n\n"
+            f"👤 کاربر: `{req['user_id']}`\n"
+            f"📦 پلن: {plan_label}\n"
+            f"📞 شماره تماس: {req['phone_number'] or '—'}\n"
+            f"وضعیت: {req['status']}"
+        )
+
+        try:
+            if req['receipt_file_id']:
+                await context.bot.send_photo(
+                    chat_id=user_id,
+                    photo=req['receipt_file_id'],
+                    caption=caption,
+                    reply_markup=InlineKeyboardMarkup(keyboard),
+                    parse_mode='Markdown'
+                )
+            else:
+                await query.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        except Exception as e:
+            logger.warning(f"نمایش رسید VIP ناموفق بود: {e}")
+            await query.edit_message_text(caption, reply_markup=InlineKeyboardMarkup(keyboard), parse_mode='Markdown')
+        return
+
+    if data.startswith("vip_req_approve_"):
+        if user_id != ADMIN_ID:
+            return
+        request_id = int(data.replace("vip_req_approve_", ""))
+        req = get_vip_payment_request(request_id)
+        if not req or req['status'] != 'PENDING':
+            await query.edit_message_text("⚠️ این درخواست دیگر در انتظار نیست.", reply_markup=admin_keyboard())
+            return
+
+        set_user_vip_plan(req['user_id'], req['plan_id'])
+        update_vip_payment_status(request_id, 'APPROVED')
+        plan_label = VIP_PLANS.get(req['plan_id'], {}).get('label', req['plan_id'])
+
+        await query.edit_message_text(f"✅ کاربر {req['user_id']} با پلن {plan_label} VIP شد.", reply_markup=admin_keyboard())
+
+        try:
+            user_lang = get_user_lang(req['user_id'])
+            await context.bot.send_message(
+                chat_id=req['user_id'],
+                text=get_text(user_lang, 'vip_approved').format(plan=plan_label),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.warning(f"اطلاع‌رسانی تایید VIP به کاربر ناموفق بود: {e}")
+        return
+
+    if data.startswith("vip_req_reject_"):
+        if user_id != ADMIN_ID:
+            return
+        request_id = int(data.replace("vip_req_reject_", ""))
+        req = get_vip_payment_request(request_id)
+        if not req or req['status'] != 'PENDING':
+            await query.edit_message_text("⚠️ این درخواست دیگر در انتظار نیست.", reply_markup=admin_keyboard())
+            return
+
+        update_vip_payment_status(request_id, 'REJECTED')
+        await query.edit_message_text(f"❌ درخواست #{request_id} رد شد.", reply_markup=admin_keyboard())
+
+        try:
+            user_lang = get_user_lang(req['user_id'])
+            await context.bot.send_message(
+                chat_id=req['user_id'],
+                text=get_text(user_lang, 'vip_rejected'),
+                parse_mode='Markdown'
+            )
+        except Exception as e:
+            logger.warning(f"اطلاع‌رسانی رد VIP به کاربر ناموفق بود: {e}")
         return
 
     if data == "delete_user":
@@ -1337,25 +1581,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== مدیریت دکمه‌های شیشه‌ای =====
-    if data == "manage_buttons":
+    # ===== تغییر نام دکمه‌های شیشه‌ای =====
+    if data == "rename_buttons_menu":
         if user_id != ADMIN_ID:
             return
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            "🔘 **مدیریت دکمه‌های شیشه‌ای**\n\nیک دکمه را برای تغییر اسم یا مخفی/نمایان کردنش انتخاب کنید:",
-            reply_markup=button_management_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("btn_manage_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("btn_manage_", "")
-        await query.edit_message_text(
-            f"🔘 **مدیریت دکمه: {button_key}**\n\nچه کاری می‌خواهید انجام دهید؟",
-            reply_markup=button_edit_keyboard(button_key),
+            "✏️ **تغییر نام دکمه‌ها**\n\nروی هر دکمه بزنید تا اسم جدیدش را وارد کنید:",
+            reply_markup=rename_buttons_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -1404,26 +1637,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         from database import add_custom_button
         add_custom_button(button_key, label, response_text=None, link_action=action_key)
 
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             f"✅ **دکمه‌ی «{label}» ساخته شد** و دقیقاً مثل دکمه‌ی «{dict(LINKABLE_ACTIONS).get(action_key, action_key)}» عمل می‌کند.\n\nاین دکمه در منوی اصلی کاربران ظاهر می‌شود.",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("custom_manage_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("custom_manage_", "")
-        from database import get_custom_button
-        btn = get_custom_button(button_key)
-        if not btn:
-            await query.edit_message_text("❌ دکمه پیدا نشد.", reply_markup=button_management_keyboard())
-            return
-        await query.edit_message_text(
-            f"🔘 **دکمه‌ی سفارشی: {btn['label']}**\n\n"
-            f"متن پاسخ فعلی:\n{btn['response_text']}",
-            reply_markup=custom_button_manage_keyboard(button_key),
+            reply_markup=rename_buttons_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -1434,9 +1651,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         button_key = data.replace("custom_delete_", "")
         from database import delete_custom_button
         delete_custom_button(button_key)
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
             "🗑️ **دکمه حذف شد.**",
-            reply_markup=button_management_keyboard(),
+            reply_markup=rename_buttons_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -1447,38 +1665,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         button_key = data.replace("btn_rename_", "")
         await query.edit_message_text(
             f"✏️ **تغییر اسم دکمه**\n\nاسم جدید دکمه‌ی `{button_key}` را وارد کنید:",
-            reply_markup=button_edit_keyboard(button_key),
             parse_mode='Markdown'
         )
         context.user_data['admin_action'] = 'rename_button'
         context.user_data['rename_button_key'] = button_key
-        return
-
-    if data.startswith("btn_toggle_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("btn_toggle_", "")
-        from database import is_button_hidden, set_button_hidden
-        currently_hidden = is_button_hidden(button_key)
-        set_button_hidden(button_key, not currently_hidden)
-        await query.edit_message_text(
-            f"✅ **وضعیت دکمه تغییر کرد.**",
-            reply_markup=button_edit_keyboard(button_key),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("btn_reset_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("btn_reset_", "")
-        from database import reset_button_customization
-        reset_button_customization(button_key)
-        await query.edit_message_text(
-            "🔄 **دکمه به حالت پیش‌فرض بازگشت.**",
-            reply_markup=button_edit_keyboard(button_key),
-            parse_mode='Markdown'
-        )
         return
 
     # ===== بک‌تست =====
@@ -1591,6 +1781,74 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 
 # ============ مدیریت پیام‌ها ============
+async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    """
+    عکس‌های ارسالی کاربر رو مدیریت می‌کنه. فعلاً تنها استفاده‌ی این هندلر،
+    دریافت عکس رسید پرداخت VIP است (وقتی admin_action == 'vip_awaiting_receipt').
+    سایر عکس‌ها (بدون این state) نادیده گرفته می‌شن.
+    """
+    user_id = update.effective_user.id
+    update_activity(user_id)
+    lang = context.user_data.get('lang') or get_user_lang(user_id)
+
+    if context.user_data.get('admin_action') != 'vip_awaiting_receipt':
+        return
+
+    plan_id = context.user_data.get('vip_selected_plan')
+    if not plan_id or plan_id not in VIP_PLANS:
+        context.user_data['admin_action'] = None
+        await update.message.reply_text(
+            get_text(lang, 'vip_intro_text'),
+            reply_markup=vip_plans_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    if not update.message.photo:
+        await update.message.reply_text(get_text(lang, 'vip_receipt_not_photo'), parse_mode='Markdown')
+        return
+
+    # ===== بزرگترین سایز عکس رو می‌گیریم (بهترین کیفیت برای بررسی ادمین) =====
+    file_id = update.message.photo[-1].file_id
+    phone_number = get_user_phone(user_id)
+
+    request_id = create_vip_payment_request(user_id, plan_id, phone_number, file_id)
+
+    context.user_data['admin_action'] = None
+    context.user_data['vip_selected_plan'] = None
+
+    await update.message.reply_text(
+        get_text(lang, 'vip_request_submitted'),
+        reply_markup=user_keyboard(lang),
+        parse_mode='Markdown'
+    )
+
+    # ===== فوروارد به ادمین با دکمه‌ی تایید/رد سریع =====
+    plan_label = VIP_PLANS[plan_id]['label']
+    caption = (
+        f"🧾 **درخواست پرداخت VIP جدید (#{request_id})**\n\n"
+        f"👤 کاربر: `{user_id}`\n"
+        f"📦 پلن: {plan_label}\n"
+        f"📞 شماره تماس: {phone_number or '—'}"
+    )
+    keyboard = [
+        [
+            InlineKeyboardButton("✅ تایید و VIP کن", callback_data=f"vip_req_approve_{request_id}"),
+            InlineKeyboardButton("❌ رد کن", callback_data=f"vip_req_reject_{request_id}"),
+        ]
+    ]
+    try:
+        await context.bot.send_photo(
+            chat_id=ADMIN_ID,
+            photo=file_id,
+            caption=caption,
+            reply_markup=InlineKeyboardMarkup(keyboard),
+            parse_mode='Markdown'
+        )
+    except Exception as e:
+        logger.warning(f"ارسال رسید VIP به ادمین ناموفق بود: {e}")
+
+
 async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     update_activity(user_id)
@@ -1625,22 +1883,79 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('admin_action'):
         action = context.user_data['admin_action']
 
+        if action == 'pnl_awaiting_risk':
+            lang = context.user_data.get('lang') or get_user_lang(user_id)
+            period = context.user_data.get('pnl_period', 'weekly')
+
+            risk_text = text.strip().replace('%', '').replace(',', '.')
+            try:
+                risk_percent = float(risk_text)
+                if risk_percent <= 0 or risk_percent > 100:
+                    raise ValueError
+            except ValueError:
+                await update.message.reply_text(get_text(lang, 'pnl_invalid_risk'), parse_mode='Markdown')
+                return
+
+            stats = get_user_pnl_stats(user_id, risk_percent, period=period)
+            period_label = get_text(lang, 'weekly_btn') if period == 'weekly' else get_text(lang, 'monthly_btn')
+
+            if stats['total'] == 0:
+                await update.message.reply_text(
+                    get_text(lang, 'pnl_no_trades'),
+                    reply_markup=user_keyboard(lang),
+                    parse_mode='Markdown'
+                )
+                context.user_data['admin_action'] = None
+                return
+
+            pf_display = f"{stats['profit_factor']:.2f}" if stats['profit_factor'] is not None else "∞"
+
+            await update.message.reply_text(
+                get_text(lang, 'pnl_result_text').format(
+                    period=period_label,
+                    risk_percent=stats['risk_percent'],
+                    total=stats['total'],
+                    wins=stats['wins'],
+                    losses=stats['losses'],
+                    winrate=stats['winrate'],
+                    profit_percent=stats['total_profit_percent'],
+                    loss_percent=stats['total_loss_percent'],
+                    net_percent=stats['net_percent'],
+                    profit_factor=pf_display
+                ),
+                reply_markup=user_keyboard(lang),
+                parse_mode='Markdown'
+            )
+            context.user_data['admin_action'] = None
+            return
+
+        if action == 'vip_awaiting_phone':
+            lang = context.user_data.get('lang') or get_user_lang(user_id)
+            phone_clean = text.strip().replace(' ', '').replace('-', '')
+
+            # ===== اعتبارسنجی ساده‌ی شماره تماس ایرانی (۰۹ + ۹ رقم، یا با +98) =====
+            import re as _re
+            if not _re.match(r'^(0|\+?98)?9\d{9}$', phone_clean):
+                await update.message.reply_text(
+                    get_text(lang, 'vip_invalid_phone'),
+                    parse_mode='Markdown'
+                )
+                return
+
+            set_user_phone(user_id, phone_clean)
+            context.user_data['admin_action'] = 'vip_awaiting_receipt'
+            await update.message.reply_text(
+                get_text(lang, 'vip_ask_receipt'),
+                parse_mode='Markdown'
+            )
+            return
+
         if action == 'set_daily_signal':
             if text.isdigit():
                 result = set_daily_signal_limit(int(text))
                 await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
                 await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            context.user_data['admin_action'] = None
-            return
-
-        if action == 'set_rr':
-            try:
-                value = float(text.replace(',', '.'))
-                result = set_rr_ratio(value)
-                await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
-            except ValueError:
-                await update.message.reply_text("❌ **لطفاً یک عدد معتبر وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
 
@@ -1653,30 +1968,56 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['admin_action'] = None
             return
 
-        if action == 'set_referral_bonus':
-            if text.isdigit():
-                result = set_referral_bonus(int(text))
+        if action == 'set_referral_step':
+            parts = [p.strip() for p in text.split(',')]
+            if len(parts) == 2 and parts[0].isdigit() and parts[1].isdigit():
+                result = set_referral_step(parts[0], parts[1])
                 await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
-                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                await update.message.reply_text(
+                    "❌ **فرمت درست:** `تعداد_رفرال,تعداد_سیگنال_اضافه` (مثال: `5,3`)",
+                    reply_markup=admin_keyboard(), parse_mode='Markdown'
+                )
             context.user_data['admin_action'] = None
             return
 
-        if action == 'set_referral_threshold':
-            if text.isdigit():
-                result = set_referral_threshold(int(text))
-                await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        if action == 'vip_user_manual':
+            parts = [p.strip() for p in text.split(',')]
+            if len(parts) == 2 and parts[0].isdigit() and parts[1] in VIP_PLANS:
+                target_id, plan_id = int(parts[0]), parts[1]
+                set_user_vip_plan(target_id, plan_id)
+                plan_label = VIP_PLANS[plan_id]['label']
+                await update.message.reply_text(
+                    f"👑 **کاربر {target_id} با پلن {plan_label} VIP شد**",
+                    reply_markup=admin_keyboard(), parse_mode='Markdown'
+                )
+                try:
+                    user_lang = get_user_lang(target_id)
+                    await context.bot.send_message(
+                        chat_id=target_id,
+                        text=get_text(user_lang, 'vip_approved').format(plan=plan_label),
+                        parse_mode='Markdown'
+                    )
+                except Exception as e:
+                    logger.warning(f"اطلاع‌رسانی VIP دستی به کاربر ناموفق بود: {e}")
             else:
-                await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+                plan_lines = "\n".join(f"`{pid}` = {p['label']}" for pid, p in VIP_PLANS.items())
+                await update.message.reply_text(
+                    f"❌ **فرمت درست:** `آیدی,پلن`\n\n{plan_lines}",
+                    reply_markup=admin_keyboard(), parse_mode='Markdown'
+                )
             context.user_data['admin_action'] = None
             return
 
-        if action == 'vip_user':
-            if text.isdigit():
-                set_user_vip(int(text), True)
-                await update.message.reply_text(f"👑 **کاربر {text} VIP شد**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            else:
-                await update.message.reply_text("❌ **لطفاً آیدی عددی وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
+        if action == 'set_vip_card':
+            parts = [p.strip() for p in text.split(',', 1)]
+            card_number = parts[0]
+            card_holder = parts[1] if len(parts) > 1 else None
+            set_vip_card_info(card_number, card_holder)
+            await update.message.reply_text(
+                "✅ **شماره کارت VIP بروزرسانی شد.**",
+                reply_markup=admin_keyboard(), parse_mode='Markdown'
+            )
             context.user_data['admin_action'] = None
             return
 
@@ -1734,6 +2075,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if action == 'rename_button':
             button_key = context.user_data.get('rename_button_key')
             context.user_data['admin_action'] = None
+            lang = context.user_data.get('lang') or get_user_lang(user_id)
 
             if not button_key:
                 await update.message.reply_text("❌ **خطا: دکمه پیدا نشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
@@ -1743,7 +2085,7 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             set_button_label(button_key, text.strip())
             await update.message.reply_text(
                 f"✅ **اسم دکمه به «{text.strip()}» تغییر کرد.**",
-                reply_markup=button_edit_keyboard(button_key),
+                reply_markup=rename_buttons_keyboard(lang),
                 parse_mode='Markdown'
             )
             return
@@ -1810,9 +2152,10 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             from database import add_custom_button
             add_custom_button(button_key, label, response_text)
 
+            lang = context.user_data.get('lang') or get_user_lang(user_id)
             await update.message.reply_text(
                 f"✅ **دکمه‌ی «{label}» ساخته شد و در منوی اصلی کاربران ظاهر می‌شود.**",
-                reply_markup=admin_keyboard(),
+                reply_markup=rename_buttons_keyboard(lang),
                 parse_mode='Markdown'
             )
             return
@@ -1841,6 +2184,7 @@ def main():
         app.add_handler(CommandHandler("start", start))
         app.add_handler(CommandHandler("admin", admin))
         app.add_handler(CallbackQueryHandler(button))
+        app.add_handler(MessageHandler(filters.PHOTO, photo_handler))
         app.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handler))
 
         logging.info("🤖 Surpri3e AI Bot Started")
