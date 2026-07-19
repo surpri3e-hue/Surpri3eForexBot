@@ -29,7 +29,8 @@ def create_database():
         result TEXT DEFAULT 'OPEN',
         user_id INTEGER DEFAULT 0,
         style TEXT DEFAULT 'ICT',
-        strength TEXT DEFAULT 'NORMAL'
+        strength TEXT DEFAULT 'NORMAL',
+        symbol TEXT DEFAULT 'XAU/USD'
     )
     """)
 
@@ -107,6 +108,9 @@ def create_database():
 
     if not _column_exists(cursor, "trades", "strength"):
         cursor.execute("ALTER TABLE trades ADD COLUMN strength TEXT DEFAULT 'NORMAL'")
+
+    if not _column_exists(cursor, "trades", "symbol"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN symbol TEXT DEFAULT 'XAU/USD'")
 
     # ===== migration: کاربرانی که از قبل با style قدیمی (ICT/SMC) ثبت شدن =====
     # چون signals.py دیگه فقط SURPRI3E رو می‌شناسه، این کاربرا باید بروزرسانی بشن
@@ -626,13 +630,13 @@ def get_active_users_today():
 
 
 # ============ معاملات ============
-def save_trade(signal, user_id=0, style='ICT', strength='NORMAL'):
+def save_trade(signal, user_id=0, style='ICT', strength='NORMAL', symbol='XAU/USD'):
     conn = connect()
     cursor = conn.cursor()
 
     cursor.execute("""
-    INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style, strength)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style, strength, symbol)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         signal["direction"],
@@ -642,7 +646,8 @@ def save_trade(signal, user_id=0, style='ICT', strength='NORMAL'):
         "OPEN",
         user_id,
         style,
-        strength
+        strength,
+        symbol
     ))
 
     trade_id = cursor.lastrowid
@@ -662,18 +667,21 @@ def update_result(trade_id, result):
 def get_open_trades():
     """
     همه‌ی معاملاتی که هنوز نتیجه‌شون OPEN است رو برمی‌گردونه (برای چک خودکار TP/SL).
-    خروجی: لیست dict با فیلدهای id, user_id, direction, entry, sl, tp
+    خروجی: لیست dict با فیلدهای id, user_id, direction, entry, sl, tp, symbol
     """
     conn = connect()
     cursor = conn.cursor()
     cursor.execute("""
-        SELECT id, user_id, direction, entry, sl, tp
+        SELECT id, user_id, direction, entry, sl, tp, symbol
         FROM trades WHERE result='OPEN'
     """)
     rows = cursor.fetchall()
     conn.close()
     return [
-        {'id': r[0], 'user_id': r[1], 'direction': r[2], 'entry': r[3], 'sl': r[4], 'tp': r[5]}
+        {
+            'id': r[0], 'user_id': r[1], 'direction': r[2], 'entry': r[3],
+            'sl': r[4], 'tp': r[5], 'symbol': r[6] if r[6] else 'XAU/USD'
+        }
         for r in rows
     ]
 
