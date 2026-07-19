@@ -112,6 +112,44 @@ def create_database():
     if not _column_exists(cursor, "trades", "symbol"):
         cursor.execute("ALTER TABLE trades ADD COLUMN symbol TEXT DEFAULT 'XAU/USD'")
 
+    # ===== migration: پلن و تاریخ انقضای VIP =====
+    if not _column_exists(cursor, "users", "vip_plan"):
+        cursor.execute("ALTER TABLE users ADD COLUMN vip_plan TEXT")
+
+    if not _column_exists(cursor, "users", "vip_expires_at"):
+        cursor.execute("ALTER TABLE users ADD COLUMN vip_expires_at TEXT")
+
+    # ===== migration: شماره تماس کاربر (برای فرآیند احراز هویت پرداخت) =====
+    if not _column_exists(cursor, "users", "phone_number"):
+        cursor.execute("ALTER TABLE users ADD COLUMN phone_number TEXT")
+
+    # ===== migration: رفع باگ RR مشترک بین مود Standard و Fast Scalp =====
+    # قبلاً یک ستون rr_ratio مشترک بود که با انتخاب RR در هر مود بازنویسی
+    # می‌شد (یعنی تنظیم RR اسکلپ، RR استاندارد کاربر رو هم پاک می‌کرد).
+    # الان هر مود ستون RR جدای خودش رو داره.
+    if not _column_exists(cursor, "users", "rr_ratio_standard"):
+        cursor.execute("ALTER TABLE users ADD COLUMN rr_ratio_standard REAL DEFAULT 2")
+
+    if not _column_exists(cursor, "users", "rr_ratio_scalp"):
+        cursor.execute("ALTER TABLE users ADD COLUMN rr_ratio_scalp REAL DEFAULT 5")
+        # ===== مقدار ستون قدیمی rr_ratio (اگه کاربر قبلاً چیزی ست کرده) رو =====
+        # ===== به‌عنوان مقدار اولیه‌ی standard منتقل می‌کنیم تا چیزی از دست نره =====
+        if _column_exists(cursor, "users", "rr_ratio"):
+            cursor.execute("UPDATE users SET rr_ratio_standard = rr_ratio WHERE rr_ratio IS NOT NULL")
+
+    # ===== جدول درخواست‌های پرداخت VIP (رسید ارسالی کاربر تا تایید دستی ادمین) =====
+    cursor.execute("""
+    CREATE TABLE IF NOT EXISTS vip_payment_requests (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        plan_id TEXT,
+        phone_number TEXT,
+        receipt_file_id TEXT,
+        status TEXT DEFAULT 'PENDING',
+        created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
+    )
+    """)
+
     # ===== migration: کاربرانی که از قبل با style قدیمی (ICT/SMC) ثبت شدن =====
     # چون signals.py دیگه فقط SURPRI3E رو می‌شناسه، این کاربرا باید بروزرسانی بشن
     # وگرنه create_signal همیشه None برمی‌گردونه (باگی که باعث "سیگنال نمی‌ده" می‌شد)
@@ -120,13 +158,14 @@ def create_database():
     # ===== تنظیمات پیش‌فرض =====
     default_settings = [
         ('daily_signal_limit', '5'),
-        ('referral_bonus', '1'),
-        ('referral_threshold', '5'),
-        ('rr_ratio', '2'),  # این فقط RR پیش‌فرض برای کاربر تازه‌واردـه
+        ('referral_step_count', '5'),   # هر چند نفر رفرال یک پله‌ست
+        ('referral_step_bonus', '3'),   # هر پله چند سیگنال اضافه می‌ده
         ('default_timeframe', '1h'),
         ('bot_locked', 'false'),
         ('signal_enabled', 'true'),
-        ('channel_locked', 'false')
+        ('channel_locked', 'false'),
+        ('vip_card_number', ''),
+        ('vip_card_holder', ''),
     ]
 
     for key, value in default_settings:
@@ -335,11 +374,9 @@ def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa')
         conn.close()
         return
 
-    default_rr = float(get_setting('rr_ratio') or '2')
-
     cursor.execute("""
-    INSERT INTO users (id, username, first_name, last_name, joined_at, last_active, lang, daily_signal_limit, rr_ratio)
-    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?)
+    INSERT INTO users (id, username, first_name, last_name, joined_at, last_active, lang, daily_signal_limit, rr_ratio_standard, rr_ratio_scalp)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
         user_id,
         username,
@@ -349,7 +386,8 @@ def add_user(user_id, username=None, first_name=None, last_name=None, lang='fa')
         datetime.now().strftime("%Y-%m-%d %H:%M"),
         lang,
         5,
-        default_rr
+        DEFAULT_RR_STANDARD,
+        DEFAULT_RR_SCALP
     ))
 
     conn.commit()
@@ -379,10 +417,16 @@ def get_users_count():
 def get_all_users():
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT id, last_active, is_vip, referral_count, lang, style FROM users ORDER BY id DESC")
+    cursor.execute(
+        "SELECT id, last_active, is_vip, referral_count, lang, style, vip_plan, vip_expires_at "
+        "FROM users ORDER BY id DESC"
+    )
     rows = cursor.fetchall()
     conn.close()
-    return [{'id': r[0], 'last_active': r[1], 'is_vip': bool(r[2]), 'referral_count': r[3], 'lang': r[4], 'style': r[5]} for r in rows]
+    return [{
+        'id': r[0], 'last_active': r[1], 'is_vip': bool(r[2]), 'referral_count': r[3],
+        'lang': r[4], 'style': r[5], 'vip_plan': r[6], 'vip_expires_at': r[7]
+    } for r in rows]
 
 
 def get_user_lang(user_id):
@@ -429,26 +473,214 @@ def delete_user(user_id):
     conn.close()
 
 
-# ============ RR اختصاصی هر کاربر (جدید) ============
-def set_user_rr(user_id, rr_value):
-    """نسبت RR مخصوص همین کاربر رو ذخیره می‌کنه، نه سراسری."""
+# ============ VIP: پلن‌ها، انقضا، شماره کارت ============
+
+# تعریف پلن‌های VIP - قیمت‌ها به تومان
+VIP_PLANS = {
+    "1m": {"label": "۱ ماهه", "days": 30, "price_toman": 500_000},
+    "3m": {"label": "۳ ماهه", "days": 90, "price_toman": 1_400_000},
+    "6m": {"label": "۶ ماهه", "days": 180, "price_toman": 2_900_000},
+    "12m": {"label": "۱۲ ماهه", "days": 365, "price_toman": 4_800_000},
+}
+
+
+def set_user_vip_plan(user_id, plan_id):
+    """
+    کاربر رو VIP می‌کنه با یک پلن مشخص، و تاریخ انقضا رو بر اساس مدت پلن
+    محاسبه می‌کنه. فقط زمانی صدا زده می‌شه که ادمین دستی پرداخت رو تایید کند.
+    """
+    if plan_id not in VIP_PLANS:
+        return False
+
+    days = VIP_PLANS[plan_id]["days"]
+    expires_at = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("UPDATE users SET rr_ratio=? WHERE id=?", (float(rr_value), user_id))
+    cursor.execute(
+        "UPDATE users SET is_vip=1, vip_plan=?, vip_expires_at=? WHERE id=?",
+        (plan_id, expires_at, user_id)
+    )
+    conn.commit()
+    conn.close()
+    return True
+
+
+def get_user_vip_status(user_id):
+    """
+    وضعیت VIP کاربر رو برمی‌گردونه: dict شامل is_vip, plan, plan_label,
+    expires_at, days_left. اگه اشتراک منقضی شده باشه، خودکار is_vip رو
+    False می‌کنه (هم در دیتابیس هم در خروجی) تا هیچ‌جای دیگه‌ی کد لازم
+    نباشه جداگانه چک تاریخ انقضا انجام بده.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT is_vip, vip_plan, vip_expires_at FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+
+    if not result:
+        conn.close()
+        return {'is_vip': False, 'plan': None, 'plan_label': None, 'expires_at': None, 'days_left': 0}
+
+    is_vip, plan, expires_at_str = result
+
+    if is_vip and expires_at_str:
+        try:
+            expires_at = datetime.strptime(expires_at_str, "%Y-%m-%d %H:%M:%S")
+        except (ValueError, TypeError):
+            expires_at = None
+
+        if expires_at and expires_at < datetime.now():
+            # ===== اشتراک منقضی شده - خودکار غیرفعال کن =====
+            cursor.execute("UPDATE users SET is_vip=0 WHERE id=?", (user_id,))
+            conn.commit()
+            conn.close()
+            return {'is_vip': False, 'plan': plan, 'plan_label': VIP_PLANS.get(plan, {}).get('label'),
+                    'expires_at': expires_at_str, 'days_left': 0}
+
+        days_left = (expires_at - datetime.now()).days if expires_at else None
+        conn.close()
+        return {
+            'is_vip': True,
+            'plan': plan,
+            'plan_label': VIP_PLANS.get(plan, {}).get('label', '—'),
+            'expires_at': expires_at_str,
+            'days_left': max(0, days_left) if days_left is not None else None,
+        }
+
+    conn.close()
+    return {'is_vip': bool(is_vip), 'plan': plan, 'plan_label': VIP_PLANS.get(plan, {}).get('label'),
+            'expires_at': expires_at_str, 'days_left': None}
+
+
+def set_user_phone(user_id, phone_number):
+    """شماره تماس کاربر رو ذخیره می‌کنه (برای فرآیند احراز هویت پرداخت VIP)."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET phone_number=? WHERE id=?", (phone_number, user_id))
     conn.commit()
     conn.close()
 
 
-def get_user_rr(user_id):
-    """RR اختصاصی کاربر رو برمی‌گردونه؛ اگه نبود، مقدار پیش‌فرض سراسری."""
+def get_user_phone(user_id):
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute("SELECT rr_ratio FROM users WHERE id=?", (user_id,))
+    cursor.execute("SELECT phone_number FROM users WHERE id=?", (user_id,))
     result = cursor.fetchone()
     conn.close()
-    if result and result[0]:
+    return result[0] if result else None
+
+
+def create_vip_payment_request(user_id, plan_id, phone_number, receipt_file_id):
+    """
+    یک درخواست پرداخت VIP جدید ثبت می‌کنه (بعد از این‌که کاربر عکس رسید
+    رو فرستاد). این فقط ثبت اطلاعات است - VIP کردن کاربر همیشه باید
+    توسط ادمین از پنل مدیریت به‌صورت دستی تایید بشه.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "INSERT INTO vip_payment_requests (user_id, plan_id, phone_number, receipt_file_id, status) "
+        "VALUES (?, ?, ?, ?, 'PENDING')",
+        (user_id, plan_id, phone_number, receipt_file_id)
+    )
+    request_id = cursor.lastrowid
+    conn.commit()
+    conn.close()
+    return request_id
+
+
+def get_vip_payment_request(request_id):
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, user_id, plan_id, phone_number, receipt_file_id, status FROM vip_payment_requests WHERE id=?",
+        (request_id,)
+    )
+    row = cursor.fetchone()
+    conn.close()
+    if row:
+        return {'id': row[0], 'user_id': row[1], 'plan_id': row[2], 'phone_number': row[3],
+                'receipt_file_id': row[4], 'status': row[5]}
+    return None
+
+
+def update_vip_payment_status(request_id, status):
+    """وضعیت درخواست رو به‌روزرسانی می‌کنه (مثلاً 'APPROVED' یا 'REJECTED')."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE vip_payment_requests SET status=? WHERE id=?", (status, request_id))
+    conn.commit()
+    conn.close()
+
+
+def get_pending_vip_requests():
+    """همه‌ی درخواست‌های پرداخت VIP در انتظار بررسی رو برمی‌گردونه."""
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(
+        "SELECT id, user_id, plan_id, phone_number, created_at FROM vip_payment_requests "
+        "WHERE status='PENDING' ORDER BY id DESC"
+    )
+    rows = cursor.fetchall()
+    conn.close()
+    return [{'id': r[0], 'user_id': r[1], 'plan_id': r[2], 'phone_number': r[3], 'created_at': r[4]} for r in rows]
+
+
+def set_vip_card_info(card_number, card_holder=None):
+    """شماره کارت (و اختیاری نام صاحب کارت) که برای پرداخت VIP نمایش داده می‌شه رو تنظیم می‌کنه."""
+    update_setting('vip_card_number', card_number)
+    if card_holder is not None:
+        update_setting('vip_card_holder', card_holder)
+
+
+def get_vip_card_info():
+    """شماره کارت و نام صاحب کارت رو برمی‌گردونه."""
+    return {
+        'card_number': get_setting('vip_card_number') or '',
+        'card_holder': get_setting('vip_card_holder') or '',
+    }
+
+
+# ============ RR اختصاصی هر کاربر - جدا برای هر مود (رفع باگ) ============
+# ⚠️ قبلاً یک ستون rr_ratio مشترک بین دو مود Standard و Fast Scalp بود:
+# انتخاب RR در یکی از مودها، RR مود دیگه رو هم بازنویسی می‌کرد. الان هر
+# کاربر دو مقدار کاملاً جدا داره: rr_ratio_standard و rr_ratio_scalp.
+#
+# پیش‌فرض‌ها متفاوتن چون طبیعت دو مود فرق داره: Standard پیش‌فرض RR=2،
+# Fast Scalp پیش‌فرض RR=5 (طبق تصمیم پروژه - اسکلپ نوسان کوچیک‌تری
+# می‌گیره پس برای سودآوری معمولاً RR بالاتری لازم داره).
+DEFAULT_RR_STANDARD = 2.0
+DEFAULT_RR_SCALP = 5.0
+
+
+def set_user_rr(user_id, rr_value, mode='standard'):
+    """
+    نسبت RR مخصوص همین کاربر رو ذخیره می‌کنه - جدا برای هر مود.
+    mode: 'standard' یا 'fast_scalp' (هرچیز غیر از 'fast_scalp' به‌عنوان
+    'standard' در نظر گرفته می‌شه).
+    """
+    column = "rr_ratio_scalp" if mode == "fast_scalp" else "rr_ratio_standard"
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(f"UPDATE users SET {column}=? WHERE id=?", (float(rr_value), user_id))
+    conn.commit()
+    conn.close()
+
+
+def get_user_rr(user_id, mode='standard'):
+    """RR اختصاصی کاربر رو برای مود مشخص‌شده برمی‌گردونه؛ اگه ذخیره نشده، مقدار پیش‌فرض همون مود."""
+    column = "rr_ratio_scalp" if mode == "fast_scalp" else "rr_ratio_standard"
+    default_value = DEFAULT_RR_SCALP if mode == "fast_scalp" else DEFAULT_RR_STANDARD
+
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute(f"SELECT {column} FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result and result[0] is not None:
         return float(result[0])
-    return float(get_setting('rr_ratio') or '2')
+    return default_value
 
 
 # ============ Cooldown سیگنال بر اساس تایم‌فریم ============
@@ -547,20 +779,30 @@ def process_referral(user_id, referrer_id):
 
 
 def check_referral_bonus(user_id):
+    """
+    سقف سیگنال روزانه‌ی کاربر رو بر اساس تعداد رفرال‌هاش دوباره محاسبه می‌کنه.
+
+    منطق: به ازای هر «referral_step_count» نفر که کاربر دعوت کرده،
+    «referral_step_bonus» سیگنال اضافه به سقف پایه (۵) اضافه می‌شه.
+    مثال پیش‌فرض: هر ۵ نفر رفرال => +۳ سیگنال روزانه.
+    هر دو مقدار از پنل ادمین قابل تغییرن (بدون نیاز به دست‌زدن به کد).
+    """
     conn = connect()
     cursor = conn.cursor()
 
-    cursor.execute("SELECT referral_count, daily_signal_limit FROM users WHERE id=?", (user_id,))
+    cursor.execute("SELECT referral_count FROM users WHERE id=?", (user_id,))
     result = cursor.fetchone()
 
     if result:
-        referral_count = result[0]
-        threshold = int(get_setting('referral_threshold') or '5')
-        bonus = int(get_setting('referral_bonus') or '1')
+        referral_count = result[0] or 0
+        step_count = int(get_setting('referral_step_count') or '5')
+        step_bonus = int(get_setting('referral_step_bonus') or '3')
+        base_limit = int(get_setting('daily_signal_limit') or '5')
 
-        if referral_count > 0:
-            extra_signals = (referral_count // threshold) * bonus
-            new_limit = 5 + extra_signals
+        if step_count > 0 and referral_count > 0:
+            steps_completed = referral_count // step_count
+            extra_signals = steps_completed * step_bonus
+            new_limit = base_limit + extra_signals
             cursor.execute(
                 "UPDATE users SET daily_signal_limit = ? WHERE id=?",
                 (new_limit, user_id)
@@ -764,39 +1006,88 @@ def _winrate_for_rows(rows):
     return {'total': total, 'wins': wins, 'losses': losses, 'winrate': winrate}
 
 
-def get_user_winrate_stats(user_id):
+def get_user_pnl_stats(user_id, risk_percent, period='weekly'):
     """
-    آمار وین‌ریت شخصی یک کاربر در سه بازه: کل، ۷ روز اخیر، ۳۰ روز اخیر.
-    فقط معاملات همون کاربر (user_id) رو در نظر می‌گیره - نه معاملات بقیه.
-    فقط معاملاتی که واقعاً TP یا SL خوردن حساب می‌شن (نه OPEN).
+    محاسبه‌ی سود/زیان و Profit Factor کاربر، با فرض این‌که کاربر روی هر
+    معامله دقیقاً «risk_percent» درصد از سرمایه‌ی خودش رو ریسک کرده.
+
+    منطق محاسبه:
+      - RR واقعی هر معامله از روی entry/sl/tp خودِ همون معامله محاسبه می‌شه:
+        RR = |tp - entry| / |entry - sl|
+        (این دقیق‌تر از فرض RR ثابت است، چون واقعاً همون RR ای است که
+        استراتژی برای اون معامله‌ی خاص محاسبه کرده بود.)
+      - هر معامله‌ی TP: سود = risk_percent × RR همون معامله
+      - هر معامله‌ی SL: ضرر = risk_percent (کامل)
+      - Profit Factor = مجموع سودها / مجموع ضررها (اگه ضرری نباشه، None برگردونده می‌شه)
+      - درصد سود کلی = مجموع سود - مجموع ضرر (بر حسب درصد سرمایه، جمع‌پذیر ساده -
+        نه ترکیبی/compounding، چون فرض بر ریسک ثابت روی سرمایه‌ی اولیه است)
+
+    period: 'weekly' (۷ روز اخیر) یا 'monthly' (۳۰ روز اخیر) یا 'all_time'
+
+    خروجی: dict شامل total, wins, losses, winrate, total_profit_percent,
+    total_loss_percent, net_percent, profit_factor
     """
     conn = connect()
     cursor = conn.cursor()
 
-    # ===== کل تاریخچه =====
-    cursor.execute("SELECT result FROM trades WHERE user_id=?", (user_id,))
-    all_rows = cursor.fetchall()
+    if period == 'weekly':
+        since = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M')
+        cursor.execute(
+            "SELECT entry, sl, tp, result FROM trades WHERE user_id=? AND time >= ? AND result IN ('TP','SL')",
+            (user_id, since)
+        )
+    elif period == 'monthly':
+        since = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M')
+        cursor.execute(
+            "SELECT entry, sl, tp, result FROM trades WHERE user_id=? AND time >= ? AND result IN ('TP','SL')",
+            (user_id, since)
+        )
+    else:
+        cursor.execute(
+            "SELECT entry, sl, tp, result FROM trades WHERE user_id=? AND result IN ('TP','SL')",
+            (user_id,)
+        )
 
-    # ===== ۷ روز اخیر =====
-    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M')
-    cursor.execute(
-        "SELECT result FROM trades WHERE user_id=? AND time >= ?",
-        (user_id, week_ago)
-    )
-    week_rows = cursor.fetchall()
-
-    # ===== ۳۰ روز اخیر =====
-    month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M')
-    cursor.execute(
-        "SELECT result FROM trades WHERE user_id=? AND time >= ?",
-        (user_id, month_ago)
-    )
-    month_rows = cursor.fetchall()
-
+    rows = cursor.fetchall()
     conn.close()
 
+    risk_percent = float(risk_percent)
+    total = len(rows)
+    wins = 0
+    losses = 0
+    total_profit_percent = 0.0
+    total_loss_percent = 0.0
+
+    for entry, sl, tp, result in rows:
+        try:
+            entry, sl, tp = float(entry), float(sl), float(tp)
+            risk_distance = abs(entry - sl)
+            if risk_distance <= 0:
+                continue  # داده‌ی معیوب - نادیده بگیر
+            reward_distance = abs(tp - entry)
+            trade_rr = reward_distance / risk_distance
+        except (TypeError, ValueError, ZeroDivisionError):
+            continue
+
+        if result == 'TP':
+            wins += 1
+            total_profit_percent += risk_percent * trade_rr
+        elif result == 'SL':
+            losses += 1
+            total_loss_percent += risk_percent
+
+    winrate = round((wins / total) * 100, 2) if total > 0 else 0
+    net_percent = round(total_profit_percent - total_loss_percent, 2)
+    profit_factor = round(total_profit_percent / total_loss_percent, 2) if total_loss_percent > 0 else None
+
     return {
-        'all_time': _winrate_for_rows(all_rows),
-        'weekly': _winrate_for_rows(week_rows),
-        'monthly': _winrate_for_rows(month_rows),
+        'total': total,
+        'wins': wins,
+        'losses': losses,
+        'winrate': winrate,
+        'risk_percent': risk_percent,
+        'total_profit_percent': round(total_profit_percent, 2),
+        'total_loss_percent': round(total_loss_percent, 2),
+        'net_percent': net_percent,
+        'profit_factor': profit_factor,
     }
