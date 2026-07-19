@@ -1006,6 +1006,44 @@ def _winrate_for_rows(rows):
     return {'total': total, 'wins': wins, 'losses': losses, 'winrate': winrate}
 
 
+def get_user_winrate_stats(user_id):
+    """
+    آمار وین‌ریت شخصی یک کاربر در سه بازه: کل، ۷ روز اخیر، ۳۰ روز اخیر.
+    فقط معاملات همون کاربر (user_id) رو در نظر می‌گیره - نه معاملات بقیه.
+    فقط معاملاتی که واقعاً TP یا SL خوردن حساب می‌شن (نه OPEN).
+    """
+    conn = connect()
+    cursor = conn.cursor()
+
+    # ===== کل تاریخچه =====
+    cursor.execute("SELECT result FROM trades WHERE user_id=?", (user_id,))
+    all_rows = cursor.fetchall()
+
+    # ===== ۷ روز اخیر =====
+    week_ago = (datetime.now() - timedelta(days=7)).strftime('%Y-%m-%d %H:%M')
+    cursor.execute(
+        "SELECT result FROM trades WHERE user_id=? AND time >= ?",
+        (user_id, week_ago)
+    )
+    week_rows = cursor.fetchall()
+
+    # ===== ۳۰ روز اخیر =====
+    month_ago = (datetime.now() - timedelta(days=30)).strftime('%Y-%m-%d %H:%M')
+    cursor.execute(
+        "SELECT result FROM trades WHERE user_id=? AND time >= ?",
+        (user_id, month_ago)
+    )
+    month_rows = cursor.fetchall()
+
+    conn.close()
+
+    return {
+        'all_time': _winrate_for_rows(all_rows),
+        'weekly': _winrate_for_rows(week_rows),
+        'monthly': _winrate_for_rows(month_rows),
+    }
+
+
 def get_user_pnl_stats(user_id, risk_percent, period='weekly'):
     """
     محاسبه‌ی سود/زیان و Profit Factor کاربر، با فرض این‌که کاربر روی هر
