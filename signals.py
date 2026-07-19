@@ -12,13 +12,15 @@
 from strategy_registry import run_strategy
 
 
-def create_signal(df, style='surpri3e'):
+def create_signal(df, style='surpri3e', rr_override=None):
     """
     دریافت سیگنال بر اساس استراتژی انتخابی.
 
     پارامترها:
         df (DataFrame): دیتای کندلی قیمت طلا
         style (str): شناسه‌ی استراتژی (مثلاً 'surpri3e')
+        rr_override (float|None): RR اختصاصی کاربر - اگه داده بشه، به‌جای
+            RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
 
     خروجی:
         signal (dict): شامل direction, entry, sl, tp, strength
@@ -33,4 +35,4 @@ def create_signal(df, style='surpri3e'):
     if style_normalized in ('surpri3e', 'ict', 'smc'):
         style_normalized = 'surpri3e'
 
-    return run_strategy(style_normalized, df)
+    return run_strategy(style_normalized, df, rr_override=rr_override)
