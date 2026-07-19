@@ -50,10 +50,74 @@ STRATEGY_INFO = {
     },
 }
 
-# حداقل و حداکثر منطقی برای فاصله‌ی SL از entry (به دلار) - ثابت، نه از پنل ادمین
-MIN_RISK = 2.0
-MAX_RISK = 15.0
-SL_BUFFER = 0.5  # فاصله‌ی اطمینان اضافه از خودِ نقطه‌ی pivot
+# ============================================================
+# ⚠️ رفع باگ مهم (۲۰۲۶-۰۷-۱۹): قبلاً MIN_RISK/MAX_RISK به‌صورت دلاری
+# ثابت (۲ تا ۱۵ دلار) تعریف شده بودن که فقط برای مقیاس قیمتی طلا
+# (XAU/USD ~ 4000$) منطقی بود. این باعث می‌شد روی BTC/USD (قیمت ~۶۵۰۰۰$)
+# که تغییرات قیمتی خیلی بزرگ‌تری داره، SL/TP همیشه به این کلمپ ثابت
+# بچسبه.
+#
+# ⚠️ رفع باگ تکمیلی (گزارش کاربر): حتی بعد از تبدیل به درصد قیمت،
+# باگ روی *همه‌ی* تایم‌فریم‌ها اثر داشت - نه فقط ۴ ساعته. چون درصد ثابت
+# (۰.۰۵٪ تا ۲٪) برای هر تایم‌فریمی یکسان بود، در حالی که نوسان طبیعی
+# قیمت در کندل‌های ۱ روزه به‌مراتب بیشتر از کندل‌های ۱ دقیقه‌ایه - نتیجه
+# این بود که SL/TP در تایم‌فریم‌های بزرگ‌تر هم بیش‌ازحد نزدیک به entry
+# می‌موند (چسبیده به سقف/کف درصدی که برای تایم‌فریم‌های کوچیک منطقی بود).
+#
+# ✅ راه‌حل نهایی: به‌جای درصد ثابت، از ATR واقعی (Average True Range)
+# خود کندل‌های همون تایم‌فریم استفاده می‌شه. ATR مستقیماً نشون می‌ده هر
+# کندل تو اون تایم‌فریم و اون نماد به‌طور میانگین چقدر نوسان داره - پس
+# خودکار و دقیق با هر ترکیب نماد/تایم‌فریمی سازگار می‌شه، بدون نیاز به
+# جدول یا ضریب دستی.
+# ============================================================
+ATR_PERIOD = 14             # تعداد کندل برای محاسبه‌ی میانگین ATR (استاندارد صنعتی)
+MIN_RISK_ATR_MULTIPLIER = 0.5   # کف ریسک: حداقل نصف ATR
+MAX_RISK_ATR_MULTIPLIER = 4.0   # سقف ریسک: حداکثر ۴ برابر ATR
+SL_BUFFER_ATR_MULTIPLIER = 0.1  # فاصله‌ی اطمینان اضافه: ۱۰٪ ATR
+
+# ===== fallback در صورتی که ATR قابل محاسبه نباشه (دیتای خیلی کوتاه) =====
+FALLBACK_MIN_RISK_PERCENT = 0.0005
+FALLBACK_MAX_RISK_PERCENT = 0.02
+FALLBACK_SL_BUFFER_PERCENT = 0.0001
+
+
+def _calculate_atr(df, period=ATR_PERIOD):
+    """
+    محاسبه‌ی Average True Range روی دیتافریم کندلی.
+
+    True Range هر کندل = بزرگترین مقدار از سه حالت:
+      1. High - Low (دامنه‌ی خودِ کندل)
+      2. |High - Close قبلی|
+      3. |Low - Close قبلی|
+
+    ATR = میانگین متحرک True Range روی `period` کندل اخیر.
+    این معیار مستقیماً نوسان واقعی بازار رو تو همون تایم‌فریم و همون
+    نماد نشون می‌ده - برخلاف درصد ثابت قیمت که برای هر تایم‌فریمی یکسانه.
+
+    خروجی: عدد ATR (float) یا None اگه دیتا برای محاسبه کافی نباشه.
+    """
+    if df is None or len(df) < period + 1:
+        return None
+
+    high = df['High'].values
+    low = df['Low'].values
+    close = df['Close'].values
+
+    true_ranges = []
+    for i in range(1, len(df)):
+        hl = high[i] - low[i]
+        hc = abs(high[i] - close[i - 1])
+        lc = abs(low[i] - close[i - 1])
+        true_ranges.append(max(hl, hc, lc))
+
+    if len(true_ranges) < period:
+        return None
+
+    # میانگین ساده‌ی آخرین `period` مقدار True Range
+    recent_tr = true_ranges[-period:]
+    atr = float(np.mean(recent_tr))
+
+    return atr if atr > 0 else None
 
 
 def _get_param(strategy_id, param_name):
@@ -151,9 +215,15 @@ def get_zigzag_signal(df, depth=None, deviation=None):
     }
 
 
-def analyze(df):
+def analyze(df, rr_override=None):
     """
     تابع اصلی تحلیل - امضای استاندارد همه‌ی استراتژی‌های plugin.
+
+    rr_override (float|None): اگه داده بشه (RR اختصاصی خود کاربر)،
+        به‌جای RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
+        این رفع باگی است که قبلاً SL/TP واقعی همیشه با RR سراسری ساخته
+        می‌شد، در حالی که به کاربر RR شخصی‌اش نمایش داده می‌شد (ناهم‌خوانی).
+
     خروجی: (signal: dict, analysis: dict) یا (None, None)
     """
     if df is None or len(df) < 30:
@@ -175,17 +245,38 @@ def analyze(df):
     direction = zz['direction']
     current = float(df['Close'].iloc[-1])
 
-    from database import get_setting
-    rr_ratio = float(get_setting('rr_ratio') or '2')
+    if rr_override is not None:
+        rr_ratio = float(rr_override)
+    else:
+        # ===== دیگه تنظیم سراسری rr_ratio وجود نداره (طبق تصمیم پروژه: =====
+        # ===== RR کاملاً به انتخاب خود کاربر/ادمین برای هر مود سپرده شده) =====
+        # این فقط یک fallback ایمن برای زمانیه که به هر دلیلی rr_override
+        # پاس داده نشده (نباید در جریان عادی اتفاق بیفته).
+        rr_ratio = 2.0
 
     entry = round(current, 2)
 
-    if direction == "BUY":
-        raw_risk = entry - (zz['pivot_price'] - SL_BUFFER)
-    else:
-        raw_risk = (zz['pivot_price'] + SL_BUFFER) - entry
+    # ===== فاصله‌ی اطمینان و کلمپ ریسک، بر اساس ATR واقعی همون کندل‌ها =====
+    # این‌طوری چه روی طلا (~4000$) چه بیت‌کوین (~65000$)، و چه تایم‌فریم
+    # ۱ دقیقه‌ای یا ۱ روزه، مقیاس ریسک با نوسان واقعی بازار هم‌خوانی داره.
+    atr = _calculate_atr(df)
 
-    risk = max(MIN_RISK, min(MAX_RISK, raw_risk))
+    if atr is not None:
+        sl_buffer = atr * SL_BUFFER_ATR_MULTIPLIER
+        min_risk = atr * MIN_RISK_ATR_MULTIPLIER
+        max_risk = atr * MAX_RISK_ATR_MULTIPLIER
+    else:
+        # ===== fallback نادر: دیتای کافی برای ATR نیست =====
+        sl_buffer = entry * FALLBACK_SL_BUFFER_PERCENT
+        min_risk = entry * FALLBACK_MIN_RISK_PERCENT
+        max_risk = entry * FALLBACK_MAX_RISK_PERCENT
+
+    if direction == "BUY":
+        raw_risk = entry - (zz['pivot_price'] - sl_buffer)
+    else:
+        raw_risk = (zz['pivot_price'] + sl_buffer) - entry
+
+    risk = max(min_risk, min(max_risk, raw_risk))
 
     # SL/TP نهایی همیشه از entry + risk نهایی (بعد از clamp) ساخته می‌شه
     if direction == "BUY":
@@ -199,17 +290,29 @@ def analyze(df):
     freshness_threshold = depth + 3
     strength = 'NORMAL' if zz['bars_ago'] <= freshness_threshold else 'WEAK'
 
-    reasons = [f"ZigZag✅ (سطح {zz['pivot_price']:.2f}، {zz['bars_ago']} کندل قبل)"]
+    # ===== متن دلایل: فرمت حرفه‌ای با تیک انگلیسی - فقط موارد واقعاً محاسبه‌شده =====
+    # (هشدارهای «سیگنال ضعیف» و «داده‌ی تستی» دیگه در متن نمایشی کاربر
+    # نیستن - این‌ها فقط در لاگ سرور ثبت می‌شن تا خودِ کاربر نگران/گیج نشه
+    # ولی اطلاعات دیباگ همچنان برای ادمین در دسترس بمونه)
+    rr_display = f"1:{rr_ratio:g}"
+    reasons = [
+        f"Surpri3e ZigZag ✅ ({zz['pivot_price']:.2f} · {zz['bars_ago']} candles ago)",
+        f"Signal Strength: {strength} ✅",
+        f"Risk/Reward: {rr_display} ✅",
+    ]
 
     if strength == 'WEAK':
-        reasons = ["⚠️ سیگنال ضعیف - نقطه‌ی چرخش کمی قدیمی‌تر است"] + reasons
+        import logging
+        logging.getLogger(__name__).info(
+            f"سیگنال WEAK صادر شد (pivot {zz['bars_ago']} کندل قبل، آستانه {freshness_threshold})."
+        )
 
     if not is_real:
-        fallback_reason = df.attrs.get('fallback_reason')
-        if fallback_reason:
-            reasons = [f"⚠️ هشدار: تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده (دلیل: {fallback_reason})"] + reasons
-        else:
-            reasons = ["⚠️ هشدار: تحلیل روی داده‌ی تستی/شبیه‌سازی‌شده انجام شده، نه قیمت واقعی بازار"] + reasons
+        import logging
+        fallback_reason = df.attrs.get('fallback_reason', 'نامشخص')
+        logging.getLogger(__name__).warning(
+            f"⚠️ سیگنال روی داده‌ی تستی/شبیه‌سازی‌شده صادر شد (نه قیمت واقعی بازار) - دلیل: {fallback_reason}"
+        )
 
     signal = {
         'direction': direction,
