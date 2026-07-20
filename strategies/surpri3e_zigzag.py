@@ -319,24 +319,40 @@ def analyze(df, rr_override=None, mode='standard'):
         min_risk = entry * FALLBACK_MIN_RISK_PERCENT
         max_risk = entry * FALLBACK_MAX_RISK_PERCENT
 
-    # ===== محدودیت زمانی اضافه برای مود Fast Scalp =====
-    # هدف: SL/TP باید ظرف ~۵ کندل (روی تایم‌فریم ۱ دقیقه = ۵ دقیقه) قابل
-    # دسترسی باشه. اگه max_risk فعلی (از ATR) بزرگ‌تر از این تخمین باشه،
-    # به سقف زمانی محدودش می‌کنیم - این‌طوری معامله‌ی اسکلپ واقعاً «سریع»
-    # می‌مونه، نه این‌که ساعت‌ها معلق بمونه.
-    if mode == 'fast_scalp':
-        scalp_max_distance = _estimate_scalp_max_distance(df)
-        if scalp_max_distance is not None and scalp_max_distance > 0:
-            max_risk = min(max_risk, scalp_max_distance)
-            # ===== کف ریسک هم نباید از سقف زمانی بزرگ‌تر بشه (در دیتای خیلی کم‌نوسان) =====
-            min_risk = min(min_risk, max_risk * 0.5)
-
     if direction == "BUY":
         raw_risk = entry - (zz['pivot_price'] - sl_buffer)
     else:
         raw_risk = (zz['pivot_price'] + sl_buffer) - entry
 
     risk = max(min_risk, min(max_risk, raw_risk))
+
+    # ============================================================
+    # ⚠️ رفع باگ گزارش‌شده: با RR=2 مود اسکلپ درست بود، ولی RR=3 باعث
+    # می‌شد TP خیلی دور بشه و دیگه ظرف ۵ دقیقه قابل‌دسترس نباشه. علتش
+    # این بود که محدودیت زمانی فقط روی «risk» (فاصله‌ی SL) اعمال می‌شد،
+    # نه روی خودِ TP - و چون TP = risk × rr_ratio ساخته می‌شه، با RR
+    # بزرگ‌تر، TP به‌طور خطی از محدودیت زمانی فراتر می‌رفت.
+    #
+    # ✅ راه‌حل: در مود اسکلپ، فاصله‌ی TP (که risk × rr_ratio است) هم باید
+    # داخل همون سقف زمانی (scalp_max_distance) بمونه. اگه با RR درخواستی
+    # از سقف فراتر بره، «risk» رو طوری کوچک‌تر می‌کنیم که TP دقیقاً روی
+    # سقف زمانی بشینه - این‌طوری RR انتخابی کاربر حفظ می‌شه (نسبت SL:TP
+    # عوض نمی‌شه) ولی کل معامله (هم SL هم TP) داخل بازه‌ی ۵ دقیقه‌ای می‌مونه.
+    # ============================================================
+    if mode == 'fast_scalp':
+        scalp_max_distance = _estimate_scalp_max_distance(df)
+        if scalp_max_distance is not None and scalp_max_distance > 0:
+            implied_tp_distance = risk * rr_ratio
+            if implied_tp_distance > scalp_max_distance:
+                # ===== risk رو کوچک می‌کنیم تا TP دقیقاً روی سقف زمانی بشینه =====
+                # ===== نسبت RR درخواستی کاربر دست‌نخورده می‌مونه =====
+                # ⚠️ نکته‌ی مهم: کف این مقدار نباید از min_risk (که برای
+                # حالت عادی/غیر-اسکلپ تعریف شده) بیاد - چون min_risk هیچ
+                # ربطی به سقف زمانی نداره و می‌تونه از scalp_max_distance
+                # بزرگ‌تر باشه (که دقیقاً باعث همین باگ می‌شد: risk دوباره
+                # بالا کشیده می‌شد و از سقف زمانی رد می‌شد). به‌جاش فقط از
+                # صفر/منفی شدن مطلق جلوگیری می‌کنیم.
+                risk = max(scalp_max_distance / rr_ratio, entry * 0.00001)
 
     # SL/TP نهایی همیشه از entry + risk نهایی (بعد از clamp) ساخته می‌شه
     if direction == "BUY":
