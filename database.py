@@ -22,6 +22,22 @@
 # (استاندارد SQLite) - شیء Cursor سفارشی زیر، خودکار "?" رو به "%s"
 # (سینتکس PostgreSQL) تبدیل می‌کنه، پس نیازی به تغییر ۸۰+ کوئری موجود
 # در این فایل نبود و ریسک خطای تایپی در این مهاجرت بزرگ به حداقل رسید.
+#
+# ⚠️ رفع باگ کندی بعد از اتصال به Neon: قبلاً هر بار که connect() صدا
+# زده می‌شد (که برای هر عملیات دیتابیس، حتی خوندن یک تنظیم ساده، اتفاق
+# می‌افته - ده‌ها بار در هر تعامل کاربر با ربات)، یک اتصال کاملاً تازه
+# TCP+TLS به سرور Neon (که روی اینترنت است، نه لوکال) باز می‌شد. برخلاف
+# SQLite (که "اتصال" بهش تقریباً هزینه‌ی صفر داره چون فقط یک فایل محلیه)،
+# باز کردن هر اتصال جدید PostgreSQL با SSL می‌تونه صدها میلی‌ثانیه طول
+# بکشه - و چون این هزینه برای هر کوئری تکرار می‌شد، در مجموع باعث کندی
+# محسوس (که در استفاده‌ی واقعی می‌تونست به چند ثانیه یا بیشتر برسه) می‌شد.
+#
+# ✅ راه‌حل: یک Connection Pool واقعی (psycopg2.pool) که تعدادی اتصال از
+# قبل باز نگه می‌داره و بین عملیات‌های مختلف بازیافت می‌کنه. تابع connect()
+# دیگه اتصال تازه نمی‌سازه - یکی از اتصالات آماده‌ی pool رو برمی‌داره؛ و
+# close() دیگه واقعاً اتصال رو قطع نمی‌کنه، فقط به pool برش می‌گردونه تا
+# دفعه‌ی بعد دوباره استفاده بشه. این تغییر در همین یک تابع مرکزی انجام
+# شده - نیازی به تغییر ۵۰+ نقطه‌ای که connect() رو صدا می‌زنن نبود.
 # ============================================================
 import os
 from datetime import datetime, timedelta
@@ -33,9 +49,16 @@ USE_POSTGRES = bool(DATABASE_URL)
 if USE_POSTGRES:
     import psycopg2
     import psycopg2.extensions
+    from psycopg2.pool import ThreadedConnectionPool
     # ===== psycopg2 به‌طور پیش‌فرض هر INTEGER بزرگ رو به‌درستی می‌خونه، =====
     # ===== ولی برای اطمینان از سازگاری کامل با کدی که REAL/TEXT خام SQLite =====
     # ===== انتظار داره، از دیکود پیش‌فرض استفاده می‌کنیم (تغییری لازم نیست) =====
+
+    # ===== ThreadedConnectionPool چون ربات چندریسمانی (thread pool برای =====
+    # ===== سیگنال‌گیری/auto_tracker) داره - این pool thread-safe است. =====
+    # minconn=2: همیشه حداقل ۲ اتصال آماده نگه می‌داره (بدون تأخیر اولین درخواست)
+    # maxconn=20: سقف اتصالات هم‌زمان - کافی برای بار متوسط بدون اتلاف منابع Neon
+    _pg_pool = ThreadedConnectionPool(minconn=2, maxconn=20, dsn=DATABASE_URL)
 else:
     import sqlite3
 
@@ -76,6 +99,11 @@ class _CompatConnection:
     """
     Connection سفارشی که هم روی psycopg2 (PostgreSQL) و هم sqlite3 کار
     می‌کنه، با یک واسط یکسان (connect().cursor(), .commit(), .close()).
+
+    برای PostgreSQL: این اتصال از یک Connection Pool گرفته شده - پس
+    close() به‌جای قطع واقعی اتصال، فقط اونو به pool برمی‌گردونه تا
+    درخواست بعدی بتونه دوباره ازش استفاده کنه (بدون هزینه‌ی باز کردن
+    اتصال تازه).
     """
     def __init__(self, real_conn):
         self._conn = real_conn
@@ -87,12 +115,24 @@ class _CompatConnection:
         self._conn.commit()
 
     def close(self):
-        self._conn.close()
+        if USE_POSTGRES:
+            # ===== قبل از برگردوندن به pool، مطمئن می‌شیم تراکنش باز/نیمه‌کاره =====
+            # ===== نمونده - وگرنه درخواست بعدی که همین اتصال رو می‌گیره، =====
+            # ===== ممکنه با یک تراکنش قدیمی/معلق روبه‌رو بشه. =====
+            try:
+                if not self._conn.closed and self._conn.status != psycopg2.extensions.STATUS_READY:
+                    self._conn.rollback()
+            except Exception:
+                pass
+            _pg_pool.putconn(self._conn)
+        else:
+            self._conn.close()
 
 
 def connect():
     if USE_POSTGRES:
-        raw_conn = psycopg2.connect(DATABASE_URL)
+        # ===== به‌جای ساختن اتصال تازه، یکی از اتصالات آماده‌ی pool رو می‌گیریم =====
+        raw_conn = _pg_pool.getconn()
         return _CompatConnection(raw_conn)
     return _CompatConnection(sqlite3.connect(DB_NAME))
 
