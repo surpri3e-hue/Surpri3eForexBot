@@ -78,7 +78,7 @@ def get_strategy(strategy_id):
     return get_all_strategies().get(strategy_id)
 
 
-def run_strategy(strategy_id, df, rr_override=None):
+def run_strategy(strategy_id, df, rr_override=None, mode='standard'):
     """
     تحلیل رو با استراتژی مشخص‌شده اجرا می‌کنه.
 
@@ -86,6 +86,9 @@ def run_strategy(strategy_id, df, rr_override=None):
     سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه. این‌طوری
     SL/TP نهایی که به کاربر نشون داده می‌شه، دقیقاً با RR ای که خودش
     از پنل تنظیمات انتخاب کرده هم‌خوانی داره.
+
+    mode: 'standard' یا 'fast_scalp' - در مود اسکلپ فاصله‌ی SL/TP به
+    چند دقیقه محدود می‌شه تا معامله واقعاً سریع باشه.
 
     خروجی: (signal, analysis) یا (None, None) اگه استراتژی پیدا نشه یا خطا بده.
     """
@@ -95,10 +98,13 @@ def run_strategy(strategy_id, df, rr_override=None):
         return None, None
 
     try:
-        return module.analyze(df, rr_override=rr_override)
+        return module.analyze(df, rr_override=rr_override, mode=mode)
     except TypeError:
-        # ===== سازگاری با استراتژی‌های قدیمی‌تر که هنوز rr_override رو نمی‌پذیرن =====
-        return module.analyze(df)
+        # ===== سازگاری با استراتژی‌های قدیمی‌تر که هنوز mode/rr_override رو نمی‌پذیرن =====
+        try:
+            return module.analyze(df, rr_override=rr_override)
+        except TypeError:
+            return module.analyze(df)
     except Exception as e:
         logger.exception(f"خطا در اجرای استراتژی '{strategy_id}': {e}")
         return None, None
