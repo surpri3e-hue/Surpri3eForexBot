@@ -80,6 +80,22 @@ FALLBACK_MIN_RISK_PERCENT = 0.0005
 FALLBACK_MAX_RISK_PERCENT = 0.02
 FALLBACK_SL_BUFFER_PERCENT = 0.0001
 
+# ============================================================
+# ⚠️ رفع باگ گزارش‌شده: مود Fast Scalp (تایم‌فریم ۱ دقیقه) باید واقعاً
+# ظرف چند دقیقه به TP/SL برسه - نه بعد از ساعت‌ها (که دیگه اسکلپ حساب
+# نمی‌شه، عملاً مثل Standard رفتار می‌کرد). چون ATR روی ۱۴ کندل حساب
+# می‌شه (یعنی ~۱۴ دقیقه‌ی گذشته)، فاصله‌ی حاصل از اون به‌تنهایی می‌تونست
+# طوری بزرگ بشه که رسیدن قیمت بهش خیلی بیشتر از ۵ دقیقه طول بکشه.
+#
+# ✅ راه‌حل: برای مود اسکلپ، یک سقف اضافه بر مبنای «میانگین حرکت قیمت
+# در SCALP_TARGET_CANDLES کندل اخیر» روی max_risk اعمال می‌شه. این
+# مستقیماً نشون می‌ده قیمت معمولاً ظرف همون تعداد کندل (که برای تایم‌فریم
+# ۱ دقیقه‌ای اسکلپ می‌شه SCALP_TARGET_CANDLES دقیقه) چقدر واقعاً حرکت
+# می‌کنه - و SL/TP رو به همون بازه‌ی واقعی محدود می‌کنه.
+# ============================================================
+SCALP_TARGET_CANDLES = 5        # هدف: رسیدن به TP/SL ظرف ۵ کندل (روی تایم‌فریم ۱ دقیقه = ۵ دقیقه)
+SCALP_MOVE_LOOKBACK = 20        # تعداد کندل اخیر برای سنجش میانگین سرعت حرکت قیمت
+
 
 def _calculate_atr(df, period=ATR_PERIOD):
     """
@@ -118,6 +134,33 @@ def _calculate_atr(df, period=ATR_PERIOD):
     atr = float(np.mean(recent_tr))
 
     return atr if atr > 0 else None
+
+
+def _estimate_scalp_max_distance(df, target_candles=SCALP_TARGET_CANDLES, lookback=SCALP_MOVE_LOOKBACK):
+    """
+    میانگین اندازه‌ی حرکت قیمت (بر حسب |Close - Close قبلی|) روی
+    `lookback` کندل اخیر رو حساب می‌کنه، و از روی اون تخمین می‌زنه
+    قیمت معمولاً ظرف `target_candles` کندل چقدر واقعی حرکت می‌کنه.
+
+    این معیار مستقل از ATR است (که روی رنج هر کندل تمرکز داره)، و به‌جاش
+    مستقیماً روی جابه‌جایی خالص قیمت در طول زمان تمرکز می‌کنه - دقیقاً
+    همون چیزی که برای تضمین «SL/TP ظرف N کندل برسه» لازم داریم.
+
+    خروجی: فاصله‌ی تخمینی (float) یا None اگه دیتا ناکافی باشه.
+    """
+    if df is None or len(df) < lookback + 1:
+        return None
+
+    close = df['Close'].values[-(lookback + 1):]
+    moves = np.abs(np.diff(close))
+    if len(moves) == 0:
+        return None
+
+    avg_move_per_candle = float(np.mean(moves))
+    if avg_move_per_candle <= 0:
+        return None
+
+    return avg_move_per_candle * target_candles
 
 
 def _get_param(strategy_id, param_name):
@@ -215,7 +258,7 @@ def get_zigzag_signal(df, depth=None, deviation=None):
     }
 
 
-def analyze(df, rr_override=None):
+def analyze(df, rr_override=None, mode='standard'):
     """
     تابع اصلی تحلیل - امضای استاندارد همه‌ی استراتژی‌های plugin.
 
@@ -223,6 +266,11 @@ def analyze(df, rr_override=None):
         به‌جای RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
         این رفع باگی است که قبلاً SL/TP واقعی همیشه با RR سراسری ساخته
         می‌شد، در حالی که به کاربر RR شخصی‌اش نمایش داده می‌شد (ناهم‌خوانی).
+
+    mode (str): 'standard' یا 'fast_scalp'. در مود fast_scalp، فاصله‌ی
+        SL/TP به‌گونه‌ای محدود می‌شه که قیمت واقعاً بتونه ظرف چند دقیقه
+        (نه ساعت‌ها) بهش برسه - چون این باگ قبلاً باعث می‌شد اسکلپ روی
+        طلا عملاً مثل Standard رفتار کنه (زمان رسیدن به TP/SL خیلی طولانی).
 
     خروجی: (signal: dict, analysis: dict) یا (None, None)
     """
@@ -270,6 +318,18 @@ def analyze(df, rr_override=None):
         sl_buffer = entry * FALLBACK_SL_BUFFER_PERCENT
         min_risk = entry * FALLBACK_MIN_RISK_PERCENT
         max_risk = entry * FALLBACK_MAX_RISK_PERCENT
+
+    # ===== محدودیت زمانی اضافه برای مود Fast Scalp =====
+    # هدف: SL/TP باید ظرف ~۵ کندل (روی تایم‌فریم ۱ دقیقه = ۵ دقیقه) قابل
+    # دسترسی باشه. اگه max_risk فعلی (از ATR) بزرگ‌تر از این تخمین باشه،
+    # به سقف زمانی محدودش می‌کنیم - این‌طوری معامله‌ی اسکلپ واقعاً «سریع»
+    # می‌مونه، نه این‌که ساعت‌ها معلق بمونه.
+    if mode == 'fast_scalp':
+        scalp_max_distance = _estimate_scalp_max_distance(df)
+        if scalp_max_distance is not None and scalp_max_distance > 0:
+            max_risk = min(max_risk, scalp_max_distance)
+            # ===== کف ریسک هم نباید از سقف زمانی بزرگ‌تر بشه (در دیتای خیلی کم‌نوسان) =====
+            min_risk = min(min_risk, max_risk * 0.5)
 
     if direction == "BUY":
         raw_risk = entry - (zz['pivot_price'] - sl_buffer)
