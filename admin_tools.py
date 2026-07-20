@@ -54,13 +54,6 @@ def set_daily_signal_limit(value):
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
 
-def set_default_timeframe(value):
-    if value not in ['1min', '5min', '15min', '1h', '4h', '1d']:
-        return "❌ تایم‌فریم نامعتبر"
-    update_setting('default_timeframe', value)
-    return f"✅ تایم‌فریم پیش‌فرض: {value}"
-
-
 # ============ سیستم رفرال ============
 def set_referral_step(step_count, step_bonus):
     """
@@ -104,7 +97,6 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
-⏱️ **تایم‌فریم:** {settings.get('default_timeframe', '1h')}
 
 🔒 **وضعیت ربات:** {'🔒 قفل' if settings.get('bot_locked') == 'true' else '🔓 باز'}
 🚀 **سیگنال:** {'✅ فعال' if settings.get('signal_enabled') == 'true' else '❌ غیرفعال'}
