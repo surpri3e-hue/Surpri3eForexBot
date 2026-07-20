@@ -489,7 +489,9 @@ async def check_channel_membership(user_id, context):
 # ============ ارسال سیگنال ============
 async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, user_id, lang='fa', symbol='XAU/USD', current_price=None, mode='standard'):
     if current_price is None:
-        current_price = get_current_price(symbol)
+        # ===== اجرا در thread جدا تا event loop اصلی ربات فریز نشه =====
+        # ===== (get_current_price از requests استفاده می‌کنه که blocking است) =====
+        current_price = await asyncio.to_thread(get_current_price, symbol)
     tehran_time = get_tehran_time()
 
     if not current_price:
@@ -818,7 +820,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             user_rr = get_user_rr(user_id, mode=mode)
 
             while elapsed < MAX_WAIT_SECONDS:
-                df = get_gold_candles(timeframe, symbol=symbol)
+                # ===== اجرا در thread جدا تا event loop اصلی ربات فریز نشه =====
+                # ===== (get_gold_candles از requests استفاده می‌کنه که blocking است؛ =====
+                # ===== قبلاً این حلقه کل ربات رو برای همه‌ی کاربرا کند می‌کرد) =====
+                df = await asyncio.to_thread(get_gold_candles, timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
                     signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode)
@@ -845,7 +850,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # این کار باید قبل از save_trade انجام بشه، وگرنه دیتابیس (و چک
                     # خودکار TP/SL) با اعداد قدیمی کار می‌کنه که با چیزی که به
                     # کاربر نشون داده می‌شه فرق داره.
-                    live_price = get_current_price(symbol)
+                    live_price = await asyncio.to_thread(get_current_price, symbol)
                     if not live_price:
                         live_price = df['Close'].iloc[-1]
 
@@ -961,7 +966,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(get_text(lang, 'fetching_price'), parse_mode='Markdown')
 
         try:
-            price = get_current_price(symbol)
+            price = await asyncio.to_thread(get_current_price, symbol)
             tehran_time = get_tehran_time()
 
             if price:
@@ -1164,14 +1169,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if data == "settings":
         settings = get_settings()
         lang = context.user_data.get('lang') or get_user_lang(user_id)
-        rr_standard = get_user_rr(user_id, mode='standard')
-        rr_scalp = get_user_rr(user_id, mode='fast_scalp')
         style = context.user_data.get('style') or get_user_style(user_id)
         signals_left = get_user_signals_left(user_id)
-
-        # ===== تایم‌فریم دیگه یک مقدار سراسری ثابت نیست - هر بار خود کاربر =====
-        # ===== انتخاب می‌کنه، پس همون انتخاب فعلی نشست رو نشون می‌دیم =====
-        current_timeframe = context.user_data.get('timeframe') or get_text(lang, 'not_selected_yet')
 
         vip_status = get_user_vip_status(user_id)
         if vip_status['is_vip']:
@@ -1184,10 +1183,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             get_text(lang, 'settings_text').format(
-                timeframe=current_timeframe,
                 status='🟢 ' + get_text(lang, 'online') if settings.get('status', True) else '🔴 ' + get_text(lang, 'offline'),
-                rr_standard=rr_standard,
-                rr_scalp=rr_scalp,
                 style=style,
                 lang=lang,
                 signals_left=signals_left,
