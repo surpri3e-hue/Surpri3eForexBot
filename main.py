@@ -61,6 +61,7 @@ from database import (
     get_pending_vip_requests,
     set_vip_card_info,
     get_vip_card_info,
+    get_user_display_info,
 )
 
 from settings import init_settings, get_settings
@@ -70,7 +71,6 @@ from admin_tools import (
     toggle_bot_lock,
     toggle_channel_lock,
     set_daily_signal_limit,
-    set_default_timeframe,
     set_referral_step,
     report
 )
@@ -108,8 +108,6 @@ def language_keyboard():
     keyboard = [
         [InlineKeyboardButton("🇮🇷 فارسی", callback_data="lang_fa")],
         [InlineKeyboardButton("🇬🇧 English", callback_data="lang_en")],
-        [InlineKeyboardButton("🇷🇺 Русский", callback_data="lang_ru")],
-        [InlineKeyboardButton("🇸🇦 العربية", callback_data="lang_ar")],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -253,9 +251,6 @@ def admin_keyboard():
         ],
         [
             InlineKeyboardButton("📊 Set Daily Signal", callback_data="set_daily_signal"),
-            InlineKeyboardButton("⏱️ Set Timeframe", callback_data="set_timeframe")
-        ],
-        [
             InlineKeyboardButton("🔄 قانون رفرال", callback_data="set_referral_step")
         ],
         [
@@ -511,31 +506,36 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
     # ===== RR جدا برای هر مود (رفع باگ اشتراک RR بین Standard/Fast Scalp) =====
     rr_ratio = get_user_rr(user_id, mode=mode)
 
-    reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['دلیلی ثبت نشده'])])
+    reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['No reason recorded'])])
     style = analysis.get('style', 'Surpri3e Strategy')
     strength = signal.get('strength', 'NORMAL')
 
     title_prefix = "⚠️ " if strength == "WEAK" else "🚨 "
 
+    # ============================================================
+    # ⚠️ تصمیم پروژه: متن سیگنال صفر تا صد همیشه انگلیسیه، حتی وقتی
+    # زبان ربات فارسیه. بر خلاف بقیه‌ی متن‌های ربات، این پیام از سیستم
+    # چندزبانه (get_text) استفاده نمی‌کنه و مستقیم هاردکد انگلیسیه.
+    # ============================================================
     message = f"""
-{title_prefix}**{get_text(lang, 'signal_title')}**
+{title_prefix}**SIGNAL ALERT**
 
-**💱 نماد:** {symbol}
-**📊 {get_text(lang, 'style_label')}:** {style}
-**📈 {get_text(lang, 'direction_label')}:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
-**📍 {get_text(lang, 'entry_label')}:** {entry:.2f}
-**🛑 {get_text(lang, 'sl_label')}:** {sl:.2f}
-**🎯 {get_text(lang, 'tp_label')}:** {tp:.2f}
-**🎯 {get_text(lang, 'rr_label')}:** 1:{rr_ratio:.1f}
+**💱 Symbol:** {symbol}
+**📊 Strategy:** {style}
+**📈 Direction:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'}
+**📍 Entry:** {entry:.2f}
+**🛑 Stop Loss:** {sl:.2f}
+**🎯 Take Profit:** {tp:.2f}
+**🎯 Risk/Reward:** 1:{rr_ratio:.1f}
 
-**📝 {get_text(lang, 'reasons_label')}:**
+**📝 Reasons:**
 {reasons_text}
 
-⏱️ **{get_text(lang, 'timeframe_label')}:** {timeframe}
-💰 **{get_text(lang, 'price_label')}:** {current_price:.2f}
-🕐 **{get_text(lang, 'time_label')}:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
+⏱️ **Timeframe:** {timeframe}
+💰 **Current Price:** {current_price:.2f}
+🕐 **Time:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
 
-ℹ️ نتیجه‌ی این معامله (TP/SL) به‌صورت خودکار بررسی و اطلاع‌رسانی می‌شود.
+ℹ️ The result of this trade (TP/SL) will be automatically tracked and reported.
 """
 
     try:
@@ -610,6 +610,33 @@ async def admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=admin_keyboard(),
         parse_mode='Markdown'
     )
+
+
+# ============ کمکی: پاسخ امن به ادمین چه پیام عکس‌دار باشه چه متنی ============
+async def _reply_admin_panel(query, text):
+    """
+    ⚠️ رفع باگ: وقتی درخواست VIP با عکس رسید نمایش داده می‌شه (send_photo)،
+    پیام یک "پیام عکس‌دار با کپشن" است - نه پیام متنی خالص. تلاش برای
+    query.edit_message_text روی چنین پیامی خطای تلگرام
+    "There is no text in the message to edit" می‌ده و کل هندلر می‌ترکه
+    (که باعث می‌شد دکمه‌ی تایید/رد هیچ واکنشی نشون نده).
+
+    این تابع تشخیص می‌ده پیام عکس‌دار است یا نه و از متد درست
+    (edit_message_caption یا edit_message_text) استفاده می‌کنه. اگه به
+    هر دلیلی هردو شکست بخوره (مثلاً پیام خیلی قدیمی شده)، به‌جای کرش
+    کردن، یک پیام تازه می‌فرسته تا ادمین همیشه یک فیدبک ببینه.
+    """
+    try:
+        if query.message and query.message.photo:
+            await query.edit_message_caption(caption=text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        else:
+            await query.edit_message_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+    except Exception as e:
+        logger.warning(f"ویرایش پیام ادمین ناموفق بود، پیام تازه ارسال می‌شود: {e}")
+        try:
+            await query.message.reply_text(text, reply_markup=admin_keyboard(), parse_mode='Markdown')
+        except Exception as e2:
+            logger.error(f"ارسال پیام تازه به ادمین هم ناموفق بود: {e2}")
 
 
 # ============ مدیریت دکمه‌ها ============
@@ -794,7 +821,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df = get_gold_candles(timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
-                    signal, analysis = create_signal(df, style, rr_override=user_rr)
+                    signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode)
                     if signal:
                         break  # سیگنال معتبر پیدا شد - از حلقه خارج شو
 
@@ -1142,6 +1169,10 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         style = context.user_data.get('style') or get_user_style(user_id)
         signals_left = get_user_signals_left(user_id)
 
+        # ===== تایم‌فریم دیگه یک مقدار سراسری ثابت نیست - هر بار خود کاربر =====
+        # ===== انتخاب می‌کنه، پس همون انتخاب فعلی نشست رو نشون می‌دیم =====
+        current_timeframe = context.user_data.get('timeframe') or get_text(lang, 'not_selected_yet')
+
         vip_status = get_user_vip_status(user_id)
         if vip_status['is_vip']:
             vip_line = get_text(lang, 'vip_status_active').format(
@@ -1153,7 +1184,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         await query.edit_message_text(
             get_text(lang, 'settings_text').format(
-                timeframe=settings.get('default_timeframe', '5min'),
+                timeframe=current_timeframe,
                 status='🟢 ' + get_text(lang, 'online') if settings.get('status', True) else '🔴 ' + get_text(lang, 'offline'),
                 rr_standard=rr_standard,
                 rr_scalp=rr_scalp,
@@ -1223,17 +1254,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             parse_mode='Markdown'
         )
         context.user_data['admin_action'] = 'set_daily_signal'
-        return
-
-    if data == "set_timeframe":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "⏱️ **تایم‌فریم پیش‌فرض**\n\nگزینه‌ها: 1min, 5min, 15min, 1h, 4h, 1d",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'set_timeframe'
         return
 
     if data == "set_referral_step":
@@ -1395,7 +1415,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         caption = (
             f"🧾 **درخواست #{request_id}**\n\n"
-            f"👤 کاربر: `{req['user_id']}`\n"
+            f"👤 کاربر: {get_user_display_info(req['user_id'])}\n"
             f"📦 پلن: {plan_label}\n"
             f"📞 شماره تماس: {req['phone_number'] or '—'}\n"
             f"وضعیت: {req['status']}"
@@ -1423,14 +1443,14 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_id = int(data.replace("vip_req_approve_", ""))
         req = get_vip_payment_request(request_id)
         if not req or req['status'] != 'PENDING':
-            await query.edit_message_text("⚠️ این درخواست دیگر در انتظار نیست.", reply_markup=admin_keyboard())
+            await _reply_admin_panel(query, "⚠️ این درخواست دیگر در انتظار نیست.")
             return
 
         set_user_vip_plan(req['user_id'], req['plan_id'])
         update_vip_payment_status(request_id, 'APPROVED')
         plan_label = VIP_PLANS.get(req['plan_id'], {}).get('label', req['plan_id'])
 
-        await query.edit_message_text(f"✅ کاربر {req['user_id']} با پلن {plan_label} VIP شد.", reply_markup=admin_keyboard())
+        await _reply_admin_panel(query, f"✅ کاربر {req['user_id']} با پلن {plan_label} VIP شد.")
 
         try:
             user_lang = get_user_lang(req['user_id'])
@@ -1449,11 +1469,11 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         request_id = int(data.replace("vip_req_reject_", ""))
         req = get_vip_payment_request(request_id)
         if not req or req['status'] != 'PENDING':
-            await query.edit_message_text("⚠️ این درخواست دیگر در انتظار نیست.", reply_markup=admin_keyboard())
+            await _reply_admin_panel(query, "⚠️ این درخواست دیگر در انتظار نیست.")
             return
 
         update_vip_payment_status(request_id, 'REJECTED')
-        await query.edit_message_text(f"❌ درخواست #{request_id} رد شد.", reply_markup=admin_keyboard())
+        await _reply_admin_panel(query, f"❌ درخواست #{request_id} رد شد.")
 
         try:
             user_lang = get_user_lang(req['user_id'])
@@ -1827,7 +1847,7 @@ async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     plan_label = VIP_PLANS[plan_id]['label']
     caption = (
         f"🧾 **درخواست پرداخت VIP جدید (#{request_id})**\n\n"
-        f"👤 کاربر: `{user_id}`\n"
+        f"👤 کاربر: {get_user_display_info(user_id)}\n"
         f"📦 پلن: {plan_label}\n"
         f"📞 شماره تماس: {phone_number or '—'}"
     )
@@ -1956,15 +1976,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             else:
                 await update.message.reply_text("❌ **لطفاً یک عدد وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            context.user_data['admin_action'] = None
-            return
-
-        if action == 'set_timeframe':
-            if text in ['1min', '5min', '15min', '1h', '4h', '1d']:
-                result = set_default_timeframe(text)
-                await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
-            else:
-                await update.message.reply_text("❌ **گزینه نامعتبر!**\n1min, 5min, 15min, 1h, 4h, 1d", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
             return
 
