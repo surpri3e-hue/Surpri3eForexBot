@@ -28,6 +28,13 @@ async def check_open_trades_once(bot):
     ⚠️ هر معامله بر اساس نماد خودش (symbol) چک می‌شه - نه یک قیمت واحد
     برای همه. قبلاً این تابع فقط قیمت طلا رو می‌گرفت و همون رو برای
     معاملات بیت‌کوین هم استفاده می‌کرد که کاملاً اشتباه بود.
+
+    ⚠️ رفع باگ کندی ربات: get_current_price از requests (synchronous/blocking)
+    استفاده می‌کنه. چون این تابع هر ۶۰ ثانیه در همون event loop اصلی که
+    به همه‌ی کاربرا سرویس می‌ده اجرا می‌شد، هر بار که این API فراخوانی
+    می‌شد، کل ربات برای همه‌ی کاربرا (تا وقتی جواب API برسه) فریز می‌شد.
+    حالا با asyncio.to_thread در یک ترد جدا اجرا می‌شه تا event loop اصلی
+    همیشه آزاد بمونه.
     """
     trades = get_open_trades()
     if not trades:
@@ -40,7 +47,7 @@ async def check_open_trades_once(bot):
         trades_by_symbol.setdefault(symbol, []).append(trade)
 
     for symbol, symbol_trades in trades_by_symbol.items():
-        price = get_current_price(symbol)
+        price = await asyncio.to_thread(get_current_price, symbol)
         if price is None:
             logger.warning(f"قیمت لحظه‌ای برای {symbol} در دسترس نیست - چک این نماد در این دور رد شد")
             continue
