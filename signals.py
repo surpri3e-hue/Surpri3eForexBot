@@ -12,7 +12,7 @@
 from strategy_registry import run_strategy
 
 
-def create_signal(df, style='surpri3e', rr_override=None):
+def create_signal(df, style='surpri3e', rr_override=None, mode='standard'):
     """
     دریافت سیگنال بر اساس استراتژی انتخابی.
 
@@ -21,6 +21,8 @@ def create_signal(df, style='surpri3e', rr_override=None):
         style (str): شناسه‌ی استراتژی (مثلاً 'surpri3e')
         rr_override (float|None): RR اختصاصی کاربر - اگه داده بشه، به‌جای
             RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
+        mode (str): 'standard' یا 'fast_scalp' - در مود اسکلپ فاصله‌ی
+            SL/TP به چند دقیقه محدود می‌شه.
 
     خروجی:
         signal (dict): شامل direction, entry, sl, tp, strength
@@ -35,4 +37,4 @@ def create_signal(df, style='surpri3e', rr_override=None):
     if style_normalized in ('surpri3e', 'ict', 'smc'):
         style_normalized = 'surpri3e'
 
-    return run_strategy(style_normalized, df, rr_override=rr_override)
+    return run_strategy(style_normalized, df, rr_override=rr_override, mode=mode)
