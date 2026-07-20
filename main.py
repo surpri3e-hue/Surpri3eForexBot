@@ -1,6 +1,7 @@
 import os
 import logging
 import asyncio
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime
 import pytz
 from telegram import (
@@ -20,6 +21,30 @@ from telegram.ext import (
 from market import get_current_price, get_gold_candles, get_tehran_time, is_market_open
 from signals import create_signal
 from languages import get_text, LANGUAGES
+
+# ============================================================
+# ⚠️ رفع باگ تأخیر در ارسال خودکار TP/SL: get_current_price/get_gold_candles
+# از requests (blocking) استفاده می‌کنن، پس با asyncio.to_thread در یک
+# ترد جدا اجرا می‌شن تا event loop اصلی فریز نشه. اما asyncio.to_thread
+# به‌طور پیش‌فرض یک ThreadPoolExecutor مشترک و سراسری داره که ظرفیتش
+# محدوده (روی سرورهای کم‌هسته مثل Railway، معمولاً فقط ۵ ترد) - اگه این
+# pool با ترافیک سیگنال‌گیری کاربرا پر بشه، حلقه‌ی auto_tracker (که در
+# فایل جدای auto_tracker.py Executor اختصاصی خودش رو داره) اثر نمی‌گیره،
+# ولی برعکسش (سیگنال‌گیری کاربرا معطل بمونه) هنوز ممکنه اتفاق بیفته اگه
+# اینجا هم از pool مشترک استفاده بشه. پس این فایل هم Executor اختصاصی
+# خودش رو داره - کاملاً جدا از auto_tracker - تا هیچ‌کدوم رو دیگری معطل
+# نکنه.
+# ============================================================
+_signal_executor = ThreadPoolExecutor(max_workers=8, thread_name_prefix="signal_fetch")
+
+
+async def _run_in_signal_thread(func, *args, **kwargs):
+    """اجرای یک تابع blocking (شبکه‌ای) در Executor اختصاصی این فایل."""
+    loop = asyncio.get_running_loop()
+    if kwargs:
+        from functools import partial
+        return await loop.run_in_executor(_signal_executor, partial(func, *args, **kwargs))
+    return await loop.run_in_executor(_signal_executor, func, *args)
 
 from database import (
     create_database,
@@ -491,7 +516,7 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
     if current_price is None:
         # ===== اجرا در thread جدا تا event loop اصلی ربات فریز نشه =====
         # ===== (get_current_price از requests استفاده می‌کنه که blocking است) =====
-        current_price = await asyncio.to_thread(get_current_price, symbol)
+        current_price = await _run_in_signal_thread(get_current_price, symbol)
     tehran_time = get_tehran_time()
 
     if not current_price:
@@ -823,7 +848,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 # ===== اجرا در thread جدا تا event loop اصلی ربات فریز نشه =====
                 # ===== (get_gold_candles از requests استفاده می‌کنه که blocking است؛ =====
                 # ===== قبلاً این حلقه کل ربات رو برای همه‌ی کاربرا کند می‌کرد) =====
-                df = await asyncio.to_thread(get_gold_candles, timeframe, symbol=symbol)
+                df = await _run_in_signal_thread(get_gold_candles, timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
                     signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode)
@@ -850,7 +875,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     # این کار باید قبل از save_trade انجام بشه، وگرنه دیتابیس (و چک
                     # خودکار TP/SL) با اعداد قدیمی کار می‌کنه که با چیزی که به
                     # کاربر نشون داده می‌شه فرق داره.
-                    live_price = await asyncio.to_thread(get_current_price, symbol)
+                    live_price = await _run_in_signal_thread(get_current_price, symbol)
                     if not live_price:
                         live_price = df['Close'].iloc[-1]
 
@@ -966,7 +991,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(get_text(lang, 'fetching_price'), parse_mode='Markdown')
 
         try:
-            price = await asyncio.to_thread(get_current_price, symbol)
+            price = await _run_in_signal_thread(get_current_price, symbol)
             tehran_time = get_tehran_time()
 
             if price:
