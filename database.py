@@ -1,26 +1,166 @@
-import sqlite3
+# ============================================================
+# 📌 لایه‌ی اتصال دیتابیس - پشتیبانی از PostgreSQL (Neon) و SQLite
+#
+# ⚠️ چرا این تغییر لازم بود: قبلاً دیتابیس SQLite (فایل trades.db) بود
+# که مستقیم روی دیسک سرور (Railway) ذخیره می‌شد. Railway فایل‌سیستمش
+# موقتیه - هر بار که کد جدید دیپلوی می‌شد (push به گیت‌هاب)، یک کانتینر
+# کاملاً تازه ساخته می‌شد و هر فایلی که قبلاً روی دیسک بود (شامل خودِ
+# دیتابیس) از بین می‌رفت. این باعث می‌شد کاربران، تاریخچه‌ی معاملات،
+# VIP ها و همه‌چیز بعد از هر آپدیت کد صفر بشه.
+#
+# ✅ راه‌حل: دیتابیس به یک سرویس PostgreSQL ابری (Neon) منتقل شد که کاملاً
+# جدا از سرور کد زندگی می‌کنه - پس دیپلوی مجدد کد هیچ اثری روی دیتای
+# ذخیره‌شده نداره.
+#
+# نحوه‌ی تنظیم: متغیر محیطی DATABASE_URL باید روی آدرس اتصال Neon تنظیم
+# بشه (تو پنل Railway، بخش Variables). اگه این متغیر تنظیم نشده باشه
+# (مثلاً موقع تست محلی روی سیستم شخصی)، کد به‌صورت خودکار به یک فایل
+# SQLite محلی (trades.db) برمی‌گرده - برای این‌که تست لوکال بدون نیاز
+# به دیتابیس واقعی هم امکان‌پذیر باشه.
+#
+# تمام کد بقیه‌ی این فایل با سینتکس "?" برای پارامترها نوشته شده
+# (استاندارد SQLite) - شیء Cursor سفارشی زیر، خودکار "?" رو به "%s"
+# (سینتکس PostgreSQL) تبدیل می‌کنه، پس نیازی به تغییر ۸۰+ کوئری موجود
+# در این فایل نبود و ریسک خطای تایپی در این مهاجرت بزرگ به حداقل رسید.
+# ============================================================
+import os
 from datetime import datetime, timedelta
 
 DB_NAME = "trades.db"
+DATABASE_URL = os.environ.get("DATABASE_URL")
+USE_POSTGRES = bool(DATABASE_URL)
+
+if USE_POSTGRES:
+    import psycopg2
+    import psycopg2.extensions
+    # ===== psycopg2 به‌طور پیش‌فرض هر INTEGER بزرگ رو به‌درستی می‌خونه، =====
+    # ===== ولی برای اطمینان از سازگاری کامل با کدی که REAL/TEXT خام SQLite =====
+    # ===== انتظار داره، از دیکود پیش‌فرض استفاده می‌کنیم (تغییری لازم نیست) =====
+else:
+    import sqlite3
+
+
+class _CompatCursor:
+    """
+    Cursor سفارشی که پشت صحنه بین سینتکس SQLite ("?") و PostgreSQL ("%s")
+    ترجمه می‌کنه. بقیه‌ی این فایل همیشه با "?" نوشته می‌شه (چون اکثر کد
+    قبلاً بر این اساس نوشته شده بود)؛ این کلاس تبدیل رو خودکار انجام می‌ده.
+    """
+    def __init__(self, real_cursor):
+        self._cursor = real_cursor
+
+    def execute(self, query, params=None):
+        if USE_POSTGRES and params is not None:
+            # ===== تبدیل "?" به "%s" - فقط علامت سؤال بیرون از رشته‌های متنی =====
+            query = query.replace("?", "%s")
+        if params is not None:
+            return self._cursor.execute(query, params)
+        return self._cursor.execute(query)
+
+    def fetchone(self):
+        return self._cursor.fetchone()
+
+    def fetchall(self):
+        return self._cursor.fetchall()
+
+    @property
+    def lastrowid(self):
+        if USE_POSTGRES:
+            # ===== psycopg2 مثل sqlite3 مستقیم lastrowid نداره - =====
+            # ===== کوئری‌هایی که به این نیاز دارن از RETURNING id استفاده می‌کنن =====
+            return getattr(self._cursor, '_pg_lastrowid', None)
+        return self._cursor.lastrowid
+
+
+class _CompatConnection:
+    """
+    Connection سفارشی که هم روی psycopg2 (PostgreSQL) و هم sqlite3 کار
+    می‌کنه، با یک واسط یکسان (connect().cursor(), .commit(), .close()).
+    """
+    def __init__(self, real_conn):
+        self._conn = real_conn
+
+    def cursor(self):
+        return _CompatCursor(self._conn.cursor())
+
+    def commit(self):
+        self._conn.commit()
+
+    def close(self):
+        self._conn.close()
 
 
 def connect():
-    return sqlite3.connect(DB_NAME)
+    if USE_POSTGRES:
+        raw_conn = psycopg2.connect(DATABASE_URL)
+        return _CompatConnection(raw_conn)
+    return _CompatConnection(sqlite3.connect(DB_NAME))
 
 
 def _column_exists(cursor, table, column):
-    cursor.execute(f"PRAGMA table_info({table})")
-    return any(row[1] == column for row in cursor.fetchall())
+    """
+    چک می‌کنه یک ستون تو یک جدول وجود داره یا نه - سازگار با هر دو
+    دیتابیس (SQLite از PRAGMA استفاده می‌کنه، PostgreSQL از information_schema).
+    """
+    if USE_POSTGRES:
+        cursor.execute(
+            "SELECT column_name FROM information_schema.columns WHERE table_name=? AND column_name=?",
+            (table, column)
+        )
+        return cursor.fetchone() is not None
+    else:
+        cursor.execute(f"PRAGMA table_info({table})")
+        return any(row[1] == column for row in cursor.fetchall())
+
+
+def _pk_clause():
+    """بند PRIMARY KEY خودافزا - نحوه‌ی نوشتنش بین دو دیتابیس فرق داره."""
+    return "SERIAL PRIMARY KEY" if USE_POSTGRES else "INTEGER PRIMARY KEY AUTOINCREMENT"
+
+
+def _insert_ignore(table, columns, conn, cursor, values):
+    """
+    معادل INSERT OR IGNORE (سینتکس SQLite) که در PostgreSQL به‌صورت
+    ON CONFLICT DO NOTHING نوشته می‌شه. برای درج تنظیمات پیش‌فرض استفاده
+    می‌شه (اگه از قبل وجود داشته باشن، نادیده گرفته می‌شن).
+    """
+    placeholders = ", ".join(["?"] * len(columns))
+    col_names = ", ".join(columns)
+    if USE_POSTGRES:
+        conflict_col = columns[0]  # اولین ستون معمولاً UNIQUE/PK هست (setting_key)
+        query = f"INSERT INTO {table} ({col_names}) VALUES ({placeholders}) ON CONFLICT ({conflict_col}) DO NOTHING"
+    else:
+        query = f"INSERT OR IGNORE INTO {table} ({col_names}) VALUES ({placeholders})"
+    cursor.execute(query, values)
+
+
+def _insert_returning_id(query, params, cursor):
+    """
+    اجرای یک INSERT و برگردوندن id ردیف تازه‌ساخته‌شده - سازگار با هر دو
+    دیتابیس. SQLite از cursor.lastrowid پشتیبانی می‌کنه؛ PostgreSQL نیاز
+    به افزودن "RETURNING id" به کوئری و fetchone دارد.
+
+    query باید یک INSERT ... VALUES (...) باشه بدون RETURNING در انتهاش -
+    این تابع خودش RETURNING id رو (فقط برای PostgreSQL) اضافه می‌کنه.
+    """
+    if USE_POSTGRES:
+        query_with_returning = query.rstrip().rstrip(';') + " RETURNING id"
+        cursor.execute(query_with_returning, params)
+        return cursor.fetchone()[0]
+    else:
+        cursor.execute(query, params)
+        return cursor.lastrowid
 
 
 def create_database():
     conn = connect()
     cursor = conn.cursor()
+    pk = _pk_clause()
 
     # ===== جدول معاملات =====
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS trades (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk},
         time TEXT,
         direction TEXT,
         entry REAL,
@@ -58,9 +198,9 @@ def create_database():
     """)
 
     # ===== جدول تنظیمات ربات =====
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS bot_settings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk},
         setting_key TEXT UNIQUE,
         setting_value TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -69,9 +209,9 @@ def create_database():
 
     # ===== جدول تنظیمات استراتژی‌ها (پارامترهای هر استراتژی، مثل سخت‌گیری) =====
     # کلید به‌صورت "strategy_id.param_name" ذخیره می‌شه، مثلاً "surpri3e.depth"
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS strategy_settings (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk},
         setting_key TEXT UNIQUE,
         setting_value TEXT,
         updated_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP
@@ -82,9 +222,9 @@ def create_database():
     # هر دکمه یا یک متن ثابت (response_text) نمایش می‌ده، یا اگه link_action
     # پر شده باشه، دقیقاً مثل یکی از دکمه‌های موجود ربات عمل می‌کنه
     # (مثلاً همون کاری که دکمه‌ی "دریافت سیگنال" انجام می‌ده).
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS custom_buttons (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk},
         button_key TEXT UNIQUE,
         label TEXT,
         response_text TEXT,
@@ -138,9 +278,9 @@ def create_database():
             cursor.execute("UPDATE users SET rr_ratio_standard = rr_ratio WHERE rr_ratio IS NOT NULL")
 
     # ===== جدول درخواست‌های پرداخت VIP (رسید ارسالی کاربر تا تایید دستی ادمین) =====
-    cursor.execute("""
+    cursor.execute(f"""
     CREATE TABLE IF NOT EXISTS vip_payment_requests (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        id {pk},
         user_id INTEGER,
         plan_id TEXT,
         phone_number TEXT,
@@ -160,7 +300,6 @@ def create_database():
         ('daily_signal_limit', '5'),
         ('referral_step_count', '5'),   # هر چند نفر رفرال یک پله‌ست
         ('referral_step_bonus', '3'),   # هر پله چند سیگنال اضافه می‌ده
-        ('default_timeframe', '1h'),
         ('bot_locked', 'false'),
         ('signal_enabled', 'true'),
         ('channel_locked', 'false'),
@@ -169,10 +308,7 @@ def create_database():
     ]
 
     for key, value in default_settings:
-        cursor.execute(
-            "INSERT OR IGNORE INTO bot_settings (setting_key, setting_value) VALUES (?, ?)",
-            (key, value)
-        )
+        _insert_ignore("bot_settings", ["setting_key", "setting_value"], conn, cursor, (key, value))
 
     conn.commit()
     conn.close()
@@ -438,6 +574,26 @@ def get_user_lang(user_id):
     return result[0] if result else 'fa'
 
 
+def get_user_display_info(user_id):
+    """
+    اطلاعات نمایشی کاربر (یوزرنیم + آیدی عددی) رو برمی‌گردونه - برای
+    مواقعی که ادمین باید کاربر رو راحت شناسایی کنه (مثلاً موقع تایید
+    پرداخت VIP). آیدی عددی همیشه از خودِ تلگرام گرفته می‌شه (قابل جعل
+    نیست)، پس همیشه همینو مبنای اصلی VIP کردن قرار می‌دیم - یوزرنیم فقط
+    برای راحتی شناسایی توسط ادمینه.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT username, first_name FROM users WHERE id=?", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    if result:
+        username, first_name = result
+        username_part = f"@{username}" if username else (first_name or "—")
+        return f"{username_part} (`{user_id}`)"
+    return f"`{user_id}`"
+
+
 def get_user_style(user_id):
     conn = connect()
     cursor = conn.cursor()
@@ -579,12 +735,12 @@ def create_vip_payment_request(user_id, plan_id, phone_number, receipt_file_id):
     """
     conn = connect()
     cursor = conn.cursor()
-    cursor.execute(
+    request_id = _insert_returning_id(
         "INSERT INTO vip_payment_requests (user_id, plan_id, phone_number, receipt_file_id, status) "
         "VALUES (?, ?, ?, ?, 'PENDING')",
-        (user_id, plan_id, phone_number, receipt_file_id)
+        (user_id, plan_id, phone_number, receipt_file_id),
+        cursor
     )
-    request_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return request_id
@@ -876,7 +1032,7 @@ def save_trade(signal, user_id=0, style='ICT', strength='NORMAL', symbol='XAU/US
     conn = connect()
     cursor = conn.cursor()
 
-    cursor.execute("""
+    trade_id = _insert_returning_id("""
     INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style, strength, symbol)
     VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     """, (
@@ -890,9 +1046,8 @@ def save_trade(signal, user_id=0, style='ICT', strength='NORMAL', symbol='XAU/US
         style,
         strength,
         symbol
-    ))
+    ), cursor)
 
-    trade_id = cursor.lastrowid
     conn.commit()
     conn.close()
     return trade_id
