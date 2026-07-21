@@ -78,7 +78,7 @@ def get_strategy(strategy_id):
     return get_all_strategies().get(strategy_id)
 
 
-def run_strategy(strategy_id, df, rr_override=None, mode='standard'):
+def run_strategy(strategy_id, df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
     """
     تحلیل رو با استراتژی مشخص‌شده اجرا می‌کنه.
 
@@ -90,6 +90,11 @@ def run_strategy(strategy_id, df, rr_override=None, mode='standard'):
     mode: 'standard' یا 'fast_scalp' - در مود اسکلپ فاصله‌ی SL/TP به
     چند دقیقه محدود می‌شه تا معامله واقعاً سریع باشه.
 
+    symbol, timeframe: برای استراتژی‌هایی که به دیتای تایم‌فریم دیگری
+    (مثلاً تایم‌فریم بالاتر برای تایید روند) نیاز دارن - اختیاریه، فقط
+    استراتژی‌هایی که این پارامترها رو در امضای analyze خودشون دارن ازش
+    استفاده می‌کنن.
+
     خروجی: (signal, analysis) یا (None, None) اگه استراتژی پیدا نشه یا خطا بده.
     """
     module = get_strategy(strategy_id)
@@ -98,13 +103,16 @@ def run_strategy(strategy_id, df, rr_override=None, mode='standard'):
         return None, None
 
     try:
-        return module.analyze(df, rr_override=rr_override, mode=mode)
+        return module.analyze(df, rr_override=rr_override, mode=mode, symbol=symbol, timeframe=timeframe)
     except TypeError:
-        # ===== سازگاری با استراتژی‌های قدیمی‌تر که هنوز mode/rr_override رو نمی‌پذیرن =====
         try:
-            return module.analyze(df, rr_override=rr_override)
+            return module.analyze(df, rr_override=rr_override, mode=mode)
         except TypeError:
-            return module.analyze(df)
+            # ===== سازگاری با استراتژی‌های قدیمی‌تر که هنوز mode/rr_override رو نمی‌پذیرن =====
+            try:
+                return module.analyze(df, rr_override=rr_override)
+            except TypeError:
+                return module.analyze(df)
     except Exception as e:
         logger.exception(f"خطا در اجرای استراتژی '{strategy_id}': {e}")
         return None, None
