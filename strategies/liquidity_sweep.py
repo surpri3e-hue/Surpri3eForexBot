@@ -299,33 +299,9 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
     else:
         rr_ratio = 2.0
 
-    atr = _calculate_atr(df)
-    if atr is not None:
-        sl_buffer = atr * SL_BUFFER_ATR_MULTIPLIER
-        min_risk = atr * MIN_RISK_ATR_MULTIPLIER
-        max_risk = atr * MAX_RISK_ATR_MULTIPLIER
-    else:
-        sl_buffer = entry * FALLBACK_SL_BUFFER_PERCENT
-        min_risk = entry * FALLBACK_MIN_RISK_PERCENT
-        max_risk = entry * FALLBACK_MAX_RISK_PERCENT
-
-    # ===== SL منطقی‌ترین جا: کمی پشت سطح sweep شده (جایی که نقدینگی گرفته شد) =====
-    swept_level = sweep['swept_level']
-    if direction == "BUY":
-        raw_risk = entry - (swept_level - sl_buffer)
-    else:
-        raw_risk = (swept_level + sl_buffer) - entry
-
-    risk = max(min_risk, min(max_risk, raw_risk))
-
-    # ===== همون رفع باگ اسکلپ که در ZigZag به کار رفت: هم SL هم TP باید =====
-    # ===== داخل بازه‌ی زمانی مجاز اسکلپ بمونن، مستقل از RR درخواستی =====
-    if mode == 'fast_scalp':
-        scalp_max_distance = _estimate_scalp_max_distance(df)
-        if scalp_max_distance is not None and scalp_max_distance > 0:
-            implied_tp_distance = risk * rr_ratio
-            if implied_tp_distance > scalp_max_distance:
-                risk = max(scalp_max_distance / rr_ratio, entry * 0.00001)
+    # ===== فاصله‌ی استاپ: عدد ثابت سراسری از پنل ادمین (نه ATR) =====
+    from strategies.risk_common import get_stop_distance
+    risk = get_stop_distance(symbol)
 
     if direction == "BUY":
         sl = round(entry - risk, 2)
@@ -338,7 +314,7 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
 
     rr_display = f"1:{rr_ratio:g}"
     reasons = [
-        f"Liquidity Sweep ✅ ({swept_level:.2f} · wick/body {sweep['wick_ratio']}x)",
+        f"Liquidity Sweep ✅ ({sweep['swept_level']:.2f} · wick/body {sweep['wick_ratio']}x)",
         f"Higher Timeframe Confirmation ✅ ({HIGHER_TIMEFRAME_MAP.get(timeframe, '4h')})",
         f"Signal Strength: {strength} ✅",
         f"Risk/Reward: {rr_display} ✅",
