@@ -345,6 +345,11 @@ def create_database():
         ('channel_locked', 'false'),
         ('vip_card_number', ''),
         ('vip_card_holder', ''),
+        ('stop_distance_pips', '30'),    # فاصله‌ی استاپ سراسری (پیپ) - جایگزین منطق ATR/اسکلپ قدیمی
+        ('pip_value_xau', '0.1'),        # ارزش هر پیپ برای طلا (دلار) - رایج‌ترین قرارداد بروکرها
+        ('pip_value_btc', '1'),          # ارزش هر پیپ برای بیت‌کوین (دلار)
+        ('default_timeframe', '5min'),   # تایم‌فریم پیش‌فرض سراسری - کاربر دیگه انتخاب نمی‌کنه
+        ('signal_cooldown_minutes', '15'),  # فاصله‌ی زمانی الزامی بین دو سیگنال متوالی هر کاربر (به‌جز ادمین)
     ]
 
     for key, value in default_settings:
@@ -880,21 +885,23 @@ def get_user_rr(user_id, mode='standard'):
 
 
 # ============ Cooldown سیگنال بر اساس تایم‌فریم ============
-# فاصله‌ی مجاز بین دو درخواست سیگنال = طول خود کندل، تا کندل هنوز
-# نبسته دوباره تحلیل نشه و همون سیگنال متناقض چند بار نیاد.
-TIMEFRAME_SECONDS = {
-    "1min": 60,
-    "5min": 5 * 60,
-    "15min": 15 * 60,
-    "1h": 60 * 60,
-    "4h": 4 * 60 * 60,
-    "1d": 24 * 60 * 60,
-}
+# ============================================================
+# ⚠️ تغییر مهم (۲۰۲۶-۰۷-۲۱): قبلاً فاصله‌ی مجاز بین دو سیگنال بر اساس
+# طول خود تایم‌فریم بود (مثلاً روی ۱ ساعته، ۱ ساعت صبر). طبق تصمیم
+# پروژه، الان یک عدد ثابت و سراسری (پیش‌فرض ۱۵ دقیقه) از پنل ادمین
+# جایگزین شده - برای همه‌ی کاربران و همه‌ی تایم‌فریم‌ها یکسانه.
+# این محدودیت شامل ادمین نمی‌شه (طبق تصمیم پروژه).
+# ============================================================
 
 
-def check_signal_cooldown(user_id, timeframe):
+def check_signal_cooldown(user_id, timeframe=None):
     """
     بررسی می‌کنه آیا کاربر مجاز به درخواست سیگنال جدیده یا باید صبر کنه.
+    فاصله‌ی مجاز، عدد ثابت سراسری «signal_cooldown_minutes» از پنل
+    ادمینه - نه وابسته به تایم‌فریم. این محدودیت شامل ادمین نمی‌شه.
+
+    پارامتر timeframe دیگه در محاسبه استفاده نمی‌شه (فقط برای سازگاری
+    با فراخوانی‌های قدیمی نگه داشته شده).
 
     خروجی: (allowed: bool, seconds_left: int)
         allowed=True  -> می‌تونه سیگنال بگیره
@@ -908,7 +915,7 @@ def check_signal_cooldown(user_id, timeframe):
     conn = connect()
     cursor = conn.cursor()
     cursor.execute(
-        "SELECT last_signal_at, last_signal_timeframe FROM users WHERE id=?",
+        "SELECT last_signal_at FROM users WHERE id=?",
         (user_id,)
     )
     result = cursor.fetchone()
@@ -917,13 +924,14 @@ def check_signal_cooldown(user_id, timeframe):
     if not result or not result[0]:
         return True, 0
 
-    last_signal_at_str, last_tf = result
+    last_signal_at_str = result[0]
     try:
         last_signal_at = datetime.strptime(last_signal_at_str, "%Y-%m-%d %H:%M:%S")
     except (ValueError, TypeError):
         return True, 0
 
-    cooldown = TIMEFRAME_SECONDS.get(timeframe, 5 * 60)
+    cooldown_minutes = float(get_setting('signal_cooldown_minutes') or '15')
+    cooldown = cooldown_minutes * 60
     elapsed = (datetime.now() - last_signal_at).total_seconds()
 
     if elapsed >= cooldown:
@@ -932,13 +940,13 @@ def check_signal_cooldown(user_id, timeframe):
     return False, int(cooldown - elapsed)
 
 
-def record_signal_time(user_id, timeframe):
+def record_signal_time(user_id, timeframe=None):
     """بعد از تولید موفق سیگنال صدا زده می‌شه تا زمان آخرین سیگنال ثبت بشه."""
     conn = connect()
     cursor = conn.cursor()
     cursor.execute(
-        "UPDATE users SET last_signal_at=?, last_signal_timeframe=? WHERE id=?",
-        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), timeframe, user_id)
+        "UPDATE users SET last_signal_at=? WHERE id=?",
+        (datetime.now().strftime("%Y-%m-%d %H:%M:%S"), user_id)
     )
     conn.commit()
     conn.close()
