@@ -12,7 +12,7 @@
 from strategy_registry import run_strategy
 
 
-def create_signal(df, style='surpri3e', rr_override=None, mode='standard'):
+def create_signal(df, style='surpri3e', rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
     """
     دریافت سیگنال بر اساس استراتژی انتخابی.
 
@@ -23,6 +23,8 @@ def create_signal(df, style='surpri3e', rr_override=None, mode='standard'):
             RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
         mode (str): 'standard' یا 'fast_scalp' - در مود اسکلپ فاصله‌ی
             SL/TP به چند دقیقه محدود می‌شه.
+        symbol, timeframe: برای استراتژی‌هایی که نیاز به دیتای تایم‌فریم
+            دیگری دارن (مثلاً تایید روند تایم‌فریم بالاتر).
 
     خروجی:
         signal (dict): شامل direction, entry, sl, tp, strength
@@ -37,4 +39,4 @@ def create_signal(df, style='surpri3e', rr_override=None, mode='standard'):
     if style_normalized in ('surpri3e', 'ict', 'smc'):
         style_normalized = 'surpri3e'
 
-    return run_strategy(style_normalized, df, rr_override=rr_override, mode=mode)
+    return run_strategy(style_normalized, df, rr_override=rr_override, mode=mode, symbol=symbol, timeframe=timeframe)
