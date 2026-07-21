@@ -138,16 +138,6 @@ def language_keyboard():
     return InlineKeyboardMarkup(keyboard)
 
 
-# ============ کیبورد انتخاب حالت معاملاتی (Surpri3e Strategy) ============
-def mode_keyboard(lang='fa'):
-    keyboard = [
-        [InlineKeyboardButton("⚡ Fast Scalp (1min)", callback_data="mode_fast_scalp")],
-        [InlineKeyboardButton("📈 Standard Mode", callback_data="mode_standard")],
-        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
-    ]
-    return InlineKeyboardMarkup(keyboard)
-
-
 # ============ کیبورد انتخاب استراتژی (کاربر عادی) ============
 def user_strategy_keyboard(lang='fa'):
     """
@@ -188,23 +178,6 @@ def live_price_symbol_keyboard(lang='fa'):
     for key, (label, _) in SYMBOL_OPTIONS.items():
         keyboard.append([InlineKeyboardButton(label, callback_data=f"liveprice_symbol_{key}")])
     keyboard.append([InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ============ کیبورد تایم‌فریم برای Standard Mode (بدون 1min) ============
-def timeframe_keyboard_standard(lang='fa'):
-    keyboard = [
-        [
-            InlineKeyboardButton(get_text(lang, 'tf_5min'), callback_data="tf_5min"),
-            InlineKeyboardButton(get_text(lang, 'tf_15min'), callback_data="tf_15min")
-        ],
-        [
-            InlineKeyboardButton(get_text(lang, 'tf_1h'), callback_data="tf_1h"),
-            InlineKeyboardButton(get_text(lang, 'tf_4h'), callback_data="tf_4h"),
-            InlineKeyboardButton(get_text(lang, 'tf_1d'), callback_data="tf_1d")
-        ],
-        [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
-    ]
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -320,9 +293,13 @@ def admin_keyboard():
             InlineKeyboardButton("📢 Broadcast", callback_data="broadcast")
         ],
         [InlineKeyboardButton("📊 Reports", callback_data="reports")],
-        [InlineKeyboardButton("⚙️ مدیریت استراتژی‌ها", callback_data="manage_strategies")],
-        [InlineKeyboardButton("✏️ تغییر نام دکمه‌ها", callback_data="rename_buttons_menu")],
-        [InlineKeyboardButton("📉 بک‌تست استراتژی", callback_data="backtest_menu")],
+        [
+            InlineKeyboardButton("📏 فاصله‌ی استاپ (پیپ)", callback_data="set_stop_distance"),
+            InlineKeyboardButton("⏱️ تایم‌فریم پیش‌فرض", callback_data="set_default_timeframe"),
+        ],
+        [
+            InlineKeyboardButton("⏳ فاصله‌ی بین سیگنال‌ها", callback_data="set_signal_cooldown"),
+        ],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
     ]
     return InlineKeyboardMarkup(keyboard)
@@ -355,159 +332,6 @@ def vip_paid_keyboard(lang='fa'):
         [InlineKeyboardButton(get_text(lang, 'vip_paid_btn'), callback_data="vip_paid_confirm")],
         [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="vip")]
     ]
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ============ کیبورد مدیریت استراتژی‌ها (پنل ادمین) ============
-def strategy_list_keyboard():
-    """لیست همه‌ی استراتژی‌های کشف‌شده رو نشون می‌ده."""
-    from strategy_registry import get_all_strategies
-    strategies = get_all_strategies()
-
-    keyboard = []
-    for strategy_id, module in strategies.items():
-        name = module.STRATEGY_INFO.get("display_name", strategy_id)
-        keyboard.append([InlineKeyboardButton(name, callback_data=f"strat_view_{strategy_id}")])
-
-    keyboard.append([InlineKeyboardButton("➕ افزودن استراتژی جدید", callback_data="add_strategy_guide")])
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def strategy_params_keyboard(strategy_id):
-    """پارامترهای یک استراتژی خاص رو با مقدار فعلی‌شون نشون می‌ده."""
-    from strategy_registry import get_strategy
-    from database import get_strategy_setting
-
-    module = get_strategy(strategy_id)
-    keyboard = []
-
-    if module:
-        params = module.STRATEGY_INFO.get("params", {})
-        for param_name, param_def in params.items():
-            current = get_strategy_setting(strategy_id, param_name, default=param_def["default"])
-            label = f"{param_def['label']}: {current}"
-            keyboard.append([InlineKeyboardButton(label, callback_data=f"strat_edit_{strategy_id}_{param_name}")])
-
-        keyboard.append([InlineKeyboardButton("🔄 بازگشت به پیش‌فرض", callback_data=f"strat_reset_{strategy_id}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="manage_strategies")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ============ کیبورد تغییر نام دکمه‌ها (پنل ادمین) ============
-# ⚠️ این پنل جایگزین پنل قدیمی «مدیریت دکمه‌ها» شد که هم مخفی/نمایان
-# کردن، هم تغییر اسم، هم بازگشت به پیش‌فرض رو با هم قاطی داشت. طبق
-# تصمیم پروژه، الان این پنل فقط و فقط «تغییر اسم» دکمه‌های اصلی رو انجام
-# می‌ده - ساده و بدون ابهام. قابلیت مخفی/نمایان‌کردن حذف شد.
-def rename_buttons_keyboard(lang='fa'):
-    """لیست همه‌ی دکمه‌های اصلی رو با اسم فعلی‌شون نشون می‌ده - کلیک روی هرکدام مستقیم رفتن به گرفتن اسم جدید."""
-    from database import get_button_label
-
-    keyboard = []
-    for button_key, _, lang_key in MANAGEABLE_USER_BUTTONS:
-        default_label = get_text(lang, lang_key)
-        current_label = get_button_label(button_key, default_label)
-        keyboard.append([InlineKeyboardButton(f"✏️ {current_label}", callback_data=f"btn_rename_{button_key}")])
-
-    keyboard.append([InlineKeyboardButton("➕ افزودن دکمه‌ی سفارشی جدید", callback_data="add_custom_button")])
-
-    # ===== دکمه‌های سفارشی موجود - فقط برای حذف (تغییر اسم برای این‌ها معنی نداره چون خودش قابل تعریفه) =====
-    from database import get_all_custom_buttons
-    for btn in get_all_custom_buttons():
-        keyboard.append([InlineKeyboardButton(f"🗑️ حذف: {btn['label']}", callback_data=f"custom_delete_{btn['button_key']}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ===== عملکردهای موجود ربات که یک دکمه‌ی سفارشی می‌تونه بهشون وصل بشه =====
-LINKABLE_ACTIONS = [
-    ("signal_menu", "🚨 دریافت سیگنال"),
-    ("performance", "📊 عملکرد"),
-    ("history", "📜 تاریخچه"),
-    ("live_price", "💰 قیمت لحظه‌ای"),
-    ("vip", "💎 VIP"),
-    ("referral", "👥 رفرال"),
-    ("settings", "⚙️ تنظیمات"),
-    ("support", "🆘 پشتیبانی"),
-]
-
-
-def custom_button_type_keyboard():
-    """انتخاب می‌کنه دکمه‌ی جدید متن ثابت نشون بده یا به یکی از عملکردهای موجود وصل بشه."""
-    keyboard = [[InlineKeyboardButton("📝 متن ثابت (وقتی کلیک شد، یک پیام نشان بده)", callback_data="cbtype_text")]]
-    for action_key, action_label in LINKABLE_ACTIONS:
-        keyboard.append([InlineKeyboardButton(f"🔗 مثل: {action_label}", callback_data=f"cbtype_link_{action_key}")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-# ============ کیبوردهای بک‌تست (پنل ادمین) ============
-BACKTEST_SYMBOLS = {
-    "gold": ("🥇 طلا (XAU/USD)", "XAU/USD"),
-    "btc": ("₿ بیت‌کوین (BTC/USD)", "BTC/USD"),
-}
-
-
-def backtest_strategy_keyboard():
-    """انتخاب استراتژی برای بک‌تست."""
-    from strategy_registry import get_all_strategies
-    strategies = get_all_strategies()
-
-    keyboard = []
-    for strategy_id, module in strategies.items():
-        name = module.STRATEGY_INFO.get("display_name", strategy_id)
-        keyboard.append([InlineKeyboardButton(name, callback_data=f"bt_strat_{strategy_id}")])
-
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="dashboard")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def backtest_symbol_keyboard(strategy_id):
-    """انتخاب نماد (طلا یا بیت‌کوین) برای بک‌تست."""
-    keyboard = []
-    for symbol_key, (label, _) in BACKTEST_SYMBOLS.items():
-        keyboard.append([InlineKeyboardButton(label, callback_data=f"bt_symbol_{strategy_id}_{symbol_key}")])
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-BACKTEST_MONTH_NAMES = {
-    1: "Jan", 2: "Feb", 3: "Mar", 4: "Apr", 5: "May", 6: "Jun",
-    7: "Jul", 8: "Aug", 9: "Sep", 10: "Oct", 11: "Nov", 12: "Dec",
-}
-
-
-def backtest_year_keyboard(which):
-    """
-    انتخاب سال شروع یا پایان بک‌تست (سال جاری و ۲ سال قبل).
-    which: 'start' یا 'end'
-    """
-    from datetime import datetime
-    current_year = datetime.now().year
-    years = [current_year - 2, current_year - 1, current_year]
-
-    keyboard = [[InlineKeyboardButton(str(y), callback_data=f"bty_{which}_{y}")] for y in years]
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
-    return InlineKeyboardMarkup(keyboard)
-
-
-def backtest_month_keyboard(which, year):
-    """
-    انتخاب ماه شروع یا پایان بک‌تست، برای سال مشخص‌شده.
-    which: 'start' یا 'end'
-    """
-    keyboard = []
-    row = []
-    for month_num, name in BACKTEST_MONTH_NAMES.items():
-        row.append(InlineKeyboardButton(name, callback_data=f"btm_{which}_{year}_{month_num:02d}"))
-        if len(row) == 3:
-            keyboard.append(row)
-            row = []
-    if row:
-        keyboard.append(row)
-
-    keyboard.append([InlineKeyboardButton("🔙 برگشت", callback_data="backtest_menu")])
     return InlineKeyboardMarkup(keyboard)
 
 
@@ -549,7 +373,7 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
     sl = signal['sl']
     tp = signal['tp']
 
-    # ===== RR جدا برای هر مود (رفع باگ اشتراک RR بین Standard/Fast Scalp) =====
+    # ===== مود (Fast Scalp/Standard) حذف شده - RR همیشه از ستون استاندارد خونده می‌شه =====
     rr_ratio = get_user_rr(user_id, mode=mode)
 
     reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', ['No reason recorded'])])
@@ -733,12 +557,17 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب استراتژی (کاربر عادی) - هر بار قبل از انتخاب مود پرسیده می‌شه =====
+    # ===== انتخاب استراتژی (کاربر عادی) - بعدش مستقیم می‌ره سراغ انتخاب RR =====
+    # ===== مود (Fast Scalp/Standard) و انتخاب تایم‌فریم حذف شدن - تایم‌فریم =====
+    # ===== الان سراسری از پنل ادمین تنظیم می‌شه (get_setting('default_timeframe')) =====
     if data.startswith("user_strat_"):
         strategy_id = data.replace("user_strat_", "")
         lang = context.user_data.get('lang') or get_user_lang(user_id)
 
         context.user_data['style'] = strategy_id
+        # ===== تایم‌فریم دیگه توسط کاربر انتخاب نمی‌شه - همیشه از تنظیمات سراسری ادمین میاد =====
+        context.user_data['timeframe'] = get_setting('default_timeframe') or '5min'
+
         conn = connect()
         cursor = conn.cursor()
         cursor.execute("UPDATE users SET style=? WHERE id=?", (strategy_id, user_id))
@@ -746,8 +575,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         conn.close()
 
         await query.edit_message_text(
-            get_text(lang, 'select_mode'),
-            reply_markup=mode_keyboard(lang),
+            get_text(lang, 'select_rr'),
+            reply_markup=rr_keyboard(lang),
             parse_mode='Markdown'
         )
         return
@@ -761,51 +590,13 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
 
-    # ===== انتخاب حالت (Fast Scalp / Standard Mode) =====
-    if data == "mode_fast_scalp":
-        # Fast Scalp فقط روی تایم‌فریم 1 دقیقه کار می‌کنه - نیازی به انتخاب تایم‌فریم نیست
-        context.user_data['timeframe'] = '1min'
-        context.user_data['mode'] = 'fast_scalp'
-
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'select_rr'),
-            reply_markup=rr_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data == "mode_standard":
-        context.user_data['mode'] = 'standard'
-
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'select_timeframe'),
-            reply_markup=timeframe_keyboard_standard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    # ===== انتخاب تایم‌فریم (فقط برای Standard Mode) =====
-    if data.startswith("tf_"):
-        timeframe = data.replace("tf_", "")
-        context.user_data['timeframe'] = timeframe
-
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            get_text(lang, 'select_rr'),
-            reply_markup=rr_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    # ===== انتخاب RR (اختصاصی همین کاربر و همین مود - رفع باگ اشتراک RR) =====
+    # ===== انتخاب RR (اختصاصی همین کاربر) - بازه محدود به ۱ تا ۵ =====
     if data.startswith("rr_"):
         rr = int(data.replace("rr_", ""))
-        rr = max(1, min(10, rr))
+        rr = max(1, min(5, rr))
 
-        mode = context.user_data.get('mode', 'standard')
-        set_user_rr(user_id, rr, mode=mode)  # ✅ per-user و per-mode، نه سراسری و نه مشترک بین مودها
+        # ===== مود حذف شده - همیشه از همون ستون rr_ratio_standard استفاده می‌کنیم =====
+        set_user_rr(user_id, rr, mode='standard')
         context.user_data['rr'] = rr
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
@@ -831,16 +622,21 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             )
             return
 
-        # ===== چک cooldown بر اساس تایم‌فریم =====
-        # جلوگیری از درخواست‌های پشت‌سرهم روی کندلی که هنوز نبسته
+        # ===== محدودیت زمانی ثابت بین دو سیگنال (سراسری، به‌جز ادمین) =====
         allowed, seconds_left = check_signal_cooldown(user_id, timeframe)
         if not allowed:
             minutes = seconds_left // 60
             seconds = seconds_left % 60
             wait_text = f"{minutes} دقیقه و {seconds} ثانیه" if minutes > 0 else f"{seconds} ثانیه"
+
+            cooldown_keyboard = InlineKeyboardMarkup([
+                [InlineKeyboardButton(get_text(lang, 'cooldown_refresh_btn'), callback_data="signal_menu")],
+                [InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")]
+            ])
+
             await query.edit_message_text(
-                get_text(lang, 'signal_cooldown').format(wait=wait_text, timeframe=timeframe),
-                reply_markup=user_keyboard(lang),
+                get_text(lang, 'signal_cooldown').format(wait=wait_text),
+                reply_markup=cooldown_keyboard,
                 parse_mode='Markdown'
             )
             return
@@ -870,9 +666,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             elapsed = 0
             frame_index = 0
 
-            # ===== مود فعلی کاربر (Standard یا Fast Scalp) - برای RR اختصاصی همون مود =====
-            mode = context.user_data.get('mode', 'standard')
-            user_rr = get_user_rr(user_id, mode=mode)
+            # ===== مود (Fast Scalp/Standard) حذف شده - RR همیشه استاندارد است =====
+            user_rr = get_user_rr(user_id, mode='standard')
 
             while elapsed < MAX_WAIT_SECONDS:
                 # ===== اجرا در thread جدا تا event loop اصلی ربات فریز نشه =====
@@ -881,7 +676,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df = await _run_in_signal_thread(get_gold_candles, timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
-                    signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode, symbol=symbol, timeframe=timeframe)
+                    signal, analysis = create_signal(df, style, rr_override=user_rr, symbol=symbol, timeframe=timeframe)
                     if signal:
                         break  # سیگنال معتبر پیدا شد - از حلقه خارج شو
 
@@ -931,7 +726,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                     except Exception:
                         pass
 
-                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price, mode=mode)
+                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price)
                 else:
                     try:
                         await query.message.delete()
@@ -1307,6 +1102,52 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'set_daily_signal'
         return
 
+    if data == "set_stop_distance":
+        if user_id != ADMIN_ID:
+            return
+        current = get_setting('stop_distance_pips') or '30'
+        await query.edit_message_text(
+            f"📏 **فاصله‌ی استاپ (پیپ)**\n\n"
+            f"فعلی: {current} پیپ\n\n"
+            f"این فاصله بین Entry و SL برای همه‌ی کاربران و همه‌ی نمادها یکسان اعمال می‌شود.\n"
+            f"عدد پیپ جدید را وارد کنید (مثلاً 30):",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'set_stop_distance'
+        return
+
+    if data == "set_default_timeframe":
+        if user_id != ADMIN_ID:
+            return
+        current = get_setting('default_timeframe') or '5min'
+        await query.edit_message_text(
+            f"⏱️ **تایم‌فریم پیش‌فرض**\n\n"
+            f"فعلی: {current}\n\n"
+            f"این تایم‌فریم برای همه‌ی کاربران به‌صورت یکسان اعمال می‌شود (کاربر دیگر خودش انتخاب نمی‌کند).\n"
+            f"گزینه‌های مجاز: 1min, 5min, 15min, 30min, 1h, 4h, 1d\n"
+            f"یکی را تایپ کنید:",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'set_default_timeframe'
+        return
+
+    if data == "set_signal_cooldown":
+        if user_id != ADMIN_ID:
+            return
+        current = get_setting('signal_cooldown_minutes') or '15'
+        await query.edit_message_text(
+            f"⏳ **فاصله‌ی بین سیگنال‌ها**\n\n"
+            f"فعلی: {current} دقیقه\n\n"
+            f"این فاصله‌ی زمانی الزامی بین دو سیگنال متوالی هر کاربر است (به‌جز ادمین که معاف است).\n"
+            f"عدد دقیقه‌ی جدید را وارد کنید (مثلاً 15):",
+            reply_markup=admin_keyboard(),
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_action'] = 'set_signal_cooldown'
+        return
+
     if data == "set_referral_step":
         if user_id != ADMIN_ID:
             return
@@ -1565,291 +1406,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(report(), reply_markup=admin_keyboard(), parse_mode='Markdown')
         return
 
-    # ===== مدیریت استراتژی‌ها =====
-    if data == "manage_strategies":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "⚙️ **مدیریت استراتژی‌ها**\n\nیک استراتژی را برای مشاهده و تنظیم پارامترهایش انتخاب کنید:",
-            reply_markup=strategy_list_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data == "add_strategy_guide":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "➕ **افزودن استراتژی جدید**\n\n"
-            "افزودن یک استراتژی کاملاً جدید (مثلاً از یک اندیکاتور TradingView) "
-            "به‌صورت خودکار از داخل ربات ممکن نیست، چون تبدیل کد Pine Script به "
-            "پایتون نیاز به بازنویسی دستی منطق آن دارد.\n\n"
-            "**برای افزودن استراتژی جدید:**\n"
-            "۱. کد کامل اسکریپت Pine Script (TradingView) را برای توسعه‌دهنده ارسال کنید.\n"
-            "۲. توسعه‌دهنده آن را به یک فایل پایتون استاندارد تبدیل کرده و در پوشه‌ی "
-            "`strategies/` قرار می‌دهد.\n"
-            "۳. پس از دیپلوی نسخه‌ی جدید، استراتژی به‌طور خودکار در همین لیست و در "
-            "دکمه‌های ربات ظاهر می‌شود - بدون نیاز به هیچ تغییر دیگری.",
-            reply_markup=strategy_list_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("strat_view_"):
-        if user_id != ADMIN_ID:
-            return
-        strategy_id = data.replace("strat_view_", "")
-
-        from strategy_registry import get_strategy
-        module = get_strategy(strategy_id)
-        if not module:
-            await query.edit_message_text("❌ استراتژی پیدا نشد.", reply_markup=strategy_list_keyboard())
-            return
-
-        info = module.STRATEGY_INFO
-        text = f"⚙️ **{info['display_name']}**\n\n{info.get('description', '')}\n\nپارامتر مورد نظر برای تغییر را انتخاب کنید:"
-        await query.edit_message_text(text, reply_markup=strategy_params_keyboard(strategy_id), parse_mode='Markdown')
-        return
-
-    if data.startswith("strat_edit_"):
-        if user_id != ADMIN_ID:
-            return
-        # فرمت: strat_edit_{strategy_id}_{param_name}
-        remainder = data.replace("strat_edit_", "")
-        strategy_id, param_name = remainder.rsplit("_", 1)
-
-        from strategy_registry import get_strategy
-        module = get_strategy(strategy_id)
-        if not module or param_name not in module.STRATEGY_INFO.get("params", {}):
-            await query.edit_message_text("❌ پارامتر پیدا نشد.", reply_markup=strategy_list_keyboard())
-            return
-
-        param_def = module.STRATEGY_INFO["params"][param_name]
-        await query.edit_message_text(
-            f"⚙️ **{param_def['label']}**\n\n"
-            f"{param_def.get('help', '')}\n\n"
-            f"بازه‌ی مجاز: {param_def['min']} تا {param_def['max']}\n"
-            f"مقدار پیش‌فرض: {param_def['default']}\n\n"
-            f"مقدار جدید را وارد کنید:",
-            reply_markup=strategy_params_keyboard(strategy_id),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'edit_strategy_param'
-        context.user_data['edit_strategy_id'] = strategy_id
-        context.user_data['edit_param_name'] = param_name
-        return
-
-    if data.startswith("strat_reset_"):
-        if user_id != ADMIN_ID:
-            return
-        strategy_id = data.replace("strat_reset_", "")
-        from database import reset_strategy_settings
-        reset_strategy_settings(strategy_id)
-        await query.edit_message_text(
-            "🔄 **پارامترها به مقادیر پیش‌فرض بازگشتند.**",
-            reply_markup=strategy_params_keyboard(strategy_id),
-            parse_mode='Markdown'
-        )
-        return
-
-    # ===== تغییر نام دکمه‌های شیشه‌ای =====
-    if data == "rename_buttons_menu":
-        if user_id != ADMIN_ID:
-            return
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            "✏️ **تغییر نام دکمه‌ها**\n\nروی هر دکمه بزنید تا اسم جدیدش را وارد کنید:",
-            reply_markup=rename_buttons_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    # ===== افزودن/مدیریت دکمه‌ی کاملاً سفارشی =====
-    if data == "add_custom_button":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "➕ **افزودن دکمه‌ی جدید**\n\n"
-            "اسم دکمه (متنی که روی دکمه نوشته می‌شود) را بفرستید:",
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'add_custom_button_label'
-        return
-
-    if data == "cbtype_text":
-        if user_id != ADMIN_ID:
-            return
-        label = context.user_data.get('new_custom_button_label')
-        if not label:
-            await query.edit_message_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            return
-        await query.edit_message_text(
-            f"✅ اسم دکمه: «{label}»\n\nحالا متنی که با کلیک روی این دکمه به کاربر نمایش داده می‌شود را بفرستید:",
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'add_custom_button_text'
-        return
-
-    if data.startswith("cbtype_link_"):
-        if user_id != ADMIN_ID:
-            return
-        action_key = data.replace("cbtype_link_", "")
-        label = context.user_data.get('new_custom_button_label')
-
-        if not label:
-            await query.edit_message_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-            return
-
-        import re
-        import time
-        slug = re.sub(r'[^a-zA-Z0-9_]', '', label.replace(' ', '_'))[:20] or "btn"
-        button_key = f"{slug}_{int(time.time())}"
-
-        from database import add_custom_button
-        add_custom_button(button_key, label, response_text=None, link_action=action_key)
-
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            f"✅ **دکمه‌ی «{label}» ساخته شد** و دقیقاً مثل دکمه‌ی «{dict(LINKABLE_ACTIONS).get(action_key, action_key)}» عمل می‌کند.\n\nاین دکمه در منوی اصلی کاربران ظاهر می‌شود.",
-            reply_markup=rename_buttons_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("custom_delete_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("custom_delete_", "")
-        from database import delete_custom_button
-        delete_custom_button(button_key)
-        lang = context.user_data.get('lang') or get_user_lang(user_id)
-        await query.edit_message_text(
-            "🗑️ **دکمه حذف شد.**",
-            reply_markup=rename_buttons_keyboard(lang),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("btn_rename_"):
-        if user_id != ADMIN_ID:
-            return
-        button_key = data.replace("btn_rename_", "")
-        await query.edit_message_text(
-            f"✏️ **تغییر اسم دکمه**\n\nاسم جدید دکمه‌ی `{button_key}` را وارد کنید:",
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'rename_button'
-        context.user_data['rename_button_key'] = button_key
-        return
-
-    # ===== بک‌تست =====
-    if data == "backtest_menu":
-        if user_id != ADMIN_ID:
-            return
-        await query.edit_message_text(
-            "📉 **بک‌تست استراتژی**\n\nابتدا استراتژی مورد نظر را انتخاب کنید:",
-            reply_markup=backtest_strategy_keyboard(),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("bt_strat_"):
-        if user_id != ADMIN_ID:
-            return
-        strategy_id = data.replace("bt_strat_", "")
-        context.user_data['backtest_strategy_id'] = strategy_id
-        await query.edit_message_text(
-            "💱 **نماد مورد نظر برای بک‌تست را انتخاب کنید:**",
-            reply_markup=backtest_symbol_keyboard(strategy_id),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("bt_symbol_"):
-        if user_id != ADMIN_ID:
-            return
-        # فرمت: bt_symbol_{strategy_id}_{symbol_key}
-        remainder = data.replace("bt_symbol_", "")
-        strategy_id, symbol_key = remainder.rsplit("_", 1)
-        symbol_value = BACKTEST_SYMBOLS.get(symbol_key, ("", "XAU/USD"))[1]
-
-        context.user_data['backtest_strategy_id'] = strategy_id
-        context.user_data['backtest_symbol'] = symbol_value
-
-        await query.edit_message_text(
-            "📅 **سال شروع بک‌تست را انتخاب کنید:**",
-            reply_markup=backtest_year_keyboard("start"),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("bty_"):
-        if user_id != ADMIN_ID:
-            return
-        # فرمت: bty_{which}_{year}   which: start یا end
-        remainder = data.replace("bty_", "")
-        which, year = remainder.rsplit("_", 1)
-
-        if which == "start":
-            context.user_data['backtest_start_year'] = year
-        else:
-            context.user_data['backtest_end_year'] = year
-
-        await query.edit_message_text(
-            f"📅 **ماه {'شروع' if which == 'start' else 'پایان'} بک‌تست را انتخاب کنید ({year}):**",
-            reply_markup=backtest_month_keyboard(which, year),
-            parse_mode='Markdown'
-        )
-        return
-
-    if data.startswith("btm_"):
-        if user_id != ADMIN_ID:
-            return
-        # فرمت: btm_{which}_{year}_{month}
-        remainder = data.replace("btm_", "")
-        which, year, month = remainder.rsplit("_", 2)
-
-        if which == "start":
-            context.user_data['backtest_start_date'] = f"{year}-{month}-01"
-            await query.edit_message_text(
-                "📅 **سال پایان بک‌تست را انتخاب کنید:**",
-                reply_markup=backtest_year_keyboard("end"),
-                parse_mode='Markdown'
-            )
-            return
-
-        # which == "end"
-        import calendar
-        last_day = calendar.monthrange(int(year), int(month))[1]
-        end_date = f"{year}-{month}-{last_day:02d}"
-        start_date = context.user_data.get('backtest_start_date')
-        strategy_id = context.user_data.get('backtest_strategy_id')
-        symbol = context.user_data.get('backtest_symbol', 'XAU/USD')
-
-        if not start_date or not strategy_id:
-            await query.edit_message_text(
-                "❌ **خطا: اطلاعات بک‌تست ناقص است. دوباره از منو شروع کنید.**",
-                reply_markup=admin_keyboard(),
-                parse_mode='Markdown'
-            )
-            return
-
-        from strategy_registry import get_strategy
-        module = get_strategy(strategy_id)
-        display_name = module.STRATEGY_INFO.get("display_name", strategy_id) if module else strategy_id
-
-        await query.edit_message_text(
-            f"⏳ **در حال اجرای بک‌تست...**\n\n💱 {symbol}\n📅 {start_date} تا {end_date}\n\nاین ممکن است چند دقیقه طول بکشد.",
-            parse_mode='Markdown'
-        )
-
-        from backtest import run_backtest, format_backtest_report
-        result = run_backtest(strategy_id, start_date, end_date, timeframe="1h", symbol=symbol)
-        report_text = format_backtest_report(result, display_name)
-
-        await query.message.reply_text(report_text, reply_markup=admin_keyboard(), parse_mode='Markdown')
-        return
-
 
 # ============ مدیریت پیام‌ها ============
 async def photo_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -2092,64 +1648,25 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             context.user_data['admin_action'] = None
             return
 
-        if action == 'edit_strategy_param':
-            strategy_id = context.user_data.get('edit_strategy_id')
-            param_name = context.user_data.get('edit_param_name')
-
-            from strategy_registry import get_strategy
-            from database import set_strategy_setting
-
-            module = get_strategy(strategy_id) if strategy_id else None
+        if action == 'set_stop_distance':
             context.user_data['admin_action'] = None
-
-            if not module or param_name not in module.STRATEGY_INFO.get("params", {}):
-                await update.message.reply_text("❌ **خطا: استراتژی یا پارامتر پیدا نشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-                return
-
-            param_def = module.STRATEGY_INFO["params"][param_name]
-            try:
-                value = float(text.replace(',', '.'))
-                if param_def["type"] == "int":
-                    value = int(value)
-
-                if not (param_def["min"] <= value <= param_def["max"]):
-                    await update.message.reply_text(
-                        f"❌ **مقدار باید بین {param_def['min']} و {param_def['max']} باشد.**",
-                        reply_markup=strategy_params_keyboard(strategy_id),
-                        parse_mode='Markdown'
-                    )
-                    return
-
-                set_strategy_setting(strategy_id, param_name, value)
-                await update.message.reply_text(
-                    f"✅ **{param_def['label']}** به مقدار **{value}** تغییر کرد.",
-                    reply_markup=strategy_params_keyboard(strategy_id),
-                    parse_mode='Markdown'
-                )
-            except ValueError:
-                await update.message.reply_text(
-                    "❌ **لطفاً یک عدد معتبر وارد کنید.**",
-                    reply_markup=strategy_params_keyboard(strategy_id),
-                    parse_mode='Markdown'
-                )
+            from admin_tools import set_stop_distance_pips
+            result = set_stop_distance_pips(text.replace(',', '.'))
+            await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             return
 
-        if action == 'rename_button':
-            button_key = context.user_data.get('rename_button_key')
+        if action == 'set_default_timeframe':
             context.user_data['admin_action'] = None
-            lang = context.user_data.get('lang') or get_user_lang(user_id)
+            from admin_tools import set_default_timeframe
+            result = set_default_timeframe(text.strip())
+            await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
+            return
 
-            if not button_key:
-                await update.message.reply_text("❌ **خطا: دکمه پیدا نشد.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-                return
-
-            from database import set_button_label
-            set_button_label(button_key, text.strip())
-            await update.message.reply_text(
-                f"✅ **اسم دکمه به «{text.strip()}» تغییر کرد.**",
-                reply_markup=rename_buttons_keyboard(lang),
-                parse_mode='Markdown'
-            )
+        if action == 'set_signal_cooldown':
+            context.user_data['admin_action'] = None
+            from admin_tools import set_signal_cooldown
+            result = set_signal_cooldown(text.replace(',', '.'))
+            await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             return
 
         if action == 'set_channel_id':
@@ -2172,52 +1689,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"⚠️ یادتان باشد که ربات را ادمین همان کانال کنید تا بتواند عضویت کاربران را چک کند، "
                 f"و از دکمه‌ی «Channel Lock» برای فعال کردن قفل استفاده کنید.",
                 reply_markup=admin_keyboard(),
-                parse_mode='Markdown'
-            )
-            return
-
-        if action == 'add_custom_button_label':
-            label = text.strip()
-            if not label:
-                await update.message.reply_text("❌ **اسم دکمه نمی‌تواند خالی باشد. دوباره وارد کنید:**", parse_mode='Markdown')
-                return
-
-            context.user_data['new_custom_button_label'] = label
-            context.user_data['admin_action'] = None
-            await update.message.reply_text(
-                f"✅ اسم دکمه: «{label}»\n\nاین دکمه چه کاری انجام دهد؟",
-                reply_markup=custom_button_type_keyboard(),
-                parse_mode='Markdown'
-            )
-            return
-
-        if action == 'add_custom_button_text':
-            response_text = text.strip()
-            label = context.user_data.get('new_custom_button_label')
-            context.user_data['admin_action'] = None
-
-            if not label:
-                await update.message.reply_text("❌ **خطا: اسم دکمه پیدا نشد. دوباره از منو شروع کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
-                return
-
-            if not response_text:
-                await update.message.reply_text("❌ **متن پاسخ نمی‌تواند خالی باشد. دوباره وارد کنید:**", parse_mode='Markdown')
-                context.user_data['admin_action'] = 'add_custom_button_text'
-                return
-
-            import re
-            import time
-            # ساخت یک شناسه‌ی یکتا از روی اسم دکمه + timestamp، برای جلوگیری از تداخل
-            slug = re.sub(r'[^a-zA-Z0-9_]', '', label.replace(' ', '_'))[:20] or "btn"
-            button_key = f"{slug}_{int(time.time())}"
-
-            from database import add_custom_button
-            add_custom_button(button_key, label, response_text)
-
-            lang = context.user_data.get('lang') or get_user_lang(user_id)
-            await update.message.reply_text(
-                f"✅ **دکمه‌ی «{label}» ساخته شد و در منوی اصلی کاربران ظاهر می‌شود.**",
-                reply_markup=rename_buttons_keyboard(lang),
                 parse_mode='Markdown'
             )
             return
