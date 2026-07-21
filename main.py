@@ -148,6 +148,25 @@ def mode_keyboard(lang='fa'):
     return InlineKeyboardMarkup(keyboard)
 
 
+# ============ کیبورد انتخاب استراتژی (کاربر عادی) ============
+def user_strategy_keyboard(lang='fa'):
+    """
+    لیست همه‌ی استراتژی‌های کشف‌شده رو برای انتخاب کاربر نشون می‌ده.
+    خودکار از strategy_registry می‌خونه - افزودن استراتژی جدید (یک فایل
+    در strategies/) بدون تغییر این تابع، خودش این‌جا ظاهر می‌شه.
+    """
+    from strategy_registry import get_all_strategies
+    strategies = get_all_strategies()
+
+    keyboard = []
+    for strategy_id, module in strategies.items():
+        name = module.STRATEGY_INFO.get("display_name", strategy_id)
+        keyboard.append([InlineKeyboardButton(name, callback_data=f"user_strat_{strategy_id}")])
+
+    keyboard.append([InlineKeyboardButton(get_text(lang, 'back_btn'), callback_data="back")])
+    return InlineKeyboardMarkup(keyboard)
+
+
 # ============ کیبورد انتخاب نماد معاملاتی ============
 SYMBOL_OPTIONS = {
     "gold": ("🥇 طلا (XAU/USD)", "XAU/USD"),
@@ -707,11 +726,22 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['lang'] = lang
         add_user(user_id, lang=lang)
 
-        # سبک همیشه Surpri3e Strategy است - فقط باید حالت (Fast Scalp/Standard) انتخاب بشه
-        context.user_data['style'] = 'surpri3e'
+        await query.edit_message_text(
+            get_text(lang, 'select_strategy'),
+            reply_markup=user_strategy_keyboard(lang),
+            parse_mode='Markdown'
+        )
+        return
+
+    # ===== انتخاب استراتژی (کاربر عادی) - هر بار قبل از انتخاب مود پرسیده می‌شه =====
+    if data.startswith("user_strat_"):
+        strategy_id = data.replace("user_strat_", "")
+        lang = context.user_data.get('lang') or get_user_lang(user_id)
+
+        context.user_data['style'] = strategy_id
         conn = connect()
         cursor = conn.cursor()
-        cursor.execute("UPDATE users SET style=? WHERE id=?", ('surpri3e', user_id))
+        cursor.execute("UPDATE users SET style=? WHERE id=?", (strategy_id, user_id))
         conn.commit()
         conn.close()
 
@@ -851,7 +881,7 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 df = await _run_in_signal_thread(get_gold_candles, timeframe, symbol=symbol)
 
                 if df is not None and not df.empty:
-                    signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode)
+                    signal, analysis = create_signal(df, style, rr_override=user_rr, mode=mode, symbol=symbol, timeframe=timeframe)
                     if signal:
                         break  # سیگنال معتبر پیدا شد - از حلقه خارج شو
 
@@ -1044,8 +1074,8 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
         lang = context.user_data.get('lang') or get_user_lang(user_id)
         await query.edit_message_text(
-            get_text(lang, 'select_mode'),
-            reply_markup=mode_keyboard(lang),
+            get_text(lang, 'select_strategy'),
+            reply_markup=user_strategy_keyboard(lang),
             parse_mode='Markdown'
         )
         return
