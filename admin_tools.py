@@ -54,6 +54,51 @@ def set_daily_signal_limit(value):
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
 
+def set_stop_distance_pips(value):
+    """
+    تنظیم فاصله‌ی استاپ (بر حسب پیپ) که برای همه‌ی کاربران و همه‌ی
+    نمادها/تایم‌فریم‌ها به‌صورت یکسان اعمال می‌شه. جایگزین منطق قبلی
+    (ATR/محدودیت زمانی اسکلپ) شده - طبق تصمیم پروژه، فاصله‌ی استاپ الان
+    یک عدد ثابت سراسریه که فقط ادمین از این پنل تغییرش می‌ده.
+    """
+    try:
+        value = float(value)
+        if value <= 0:
+            return "❌ مقدار باید بزرگتر از صفر باشد."
+        update_setting('stop_distance_pips', str(value))
+        return f"✅ فاصله‌ی استاپ (Entry تا SL) برای همه‌ی کاربران به {value} پیپ تغییر کرد."
+    except Exception:
+        return "❌ لطفاً یک عدد معتبر وارد کنید."
+
+
+def set_default_timeframe(value):
+    """
+    تنظیم تایم‌فریم پیش‌فرض سراسری که برای همه‌ی کاربران اعمال می‌شه.
+    کاربر دیگه خودش تایم‌فریم رو انتخاب نمی‌کنه - این مقدار سراسری
+    همیشه استفاده می‌شه.
+    """
+    valid_timeframes = ['1min', '5min', '15min', '30min', '1h', '4h', '1d']
+    if value not in valid_timeframes:
+        return f"❌ تایم‌فریم نامعتبر. گزینه‌های مجاز: {', '.join(valid_timeframes)}"
+    update_setting('default_timeframe', value)
+    return f"✅ تایم‌فریم پیش‌فرض برای همه‌ی کاربران به {value} تغییر کرد."
+
+
+def set_signal_cooldown(value):
+    """
+    تنظیم فاصله‌ی زمانی الزامی (به دقیقه) بین دو سیگنال متوالی هر کاربر.
+    این محدودیت شامل ادمین نمی‌شه (طبق تصمیم پروژه).
+    """
+    try:
+        value = float(value)
+        if value <= 0:
+            return "❌ مقدار باید بزرگتر از صفر باشد."
+        update_setting('signal_cooldown_minutes', str(value))
+        return f"✅ فاصله‌ی بین سیگنال‌ها برای همه‌ی کاربران (به‌جز ادمین) به {value} دقیقه تغییر کرد."
+    except Exception:
+        return "❌ لطفاً یک عدد معتبر وارد کنید."
+
+
 # ============ سیستم رفرال ============
 def set_referral_step(step_count, step_bonus):
     """
@@ -97,6 +142,9 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
+📏 **فاصله‌ی استاپ:** {settings.get('stop_distance_pips', '30')} پیپ
+⏱️ **تایم‌فریم پیش‌فرض:** {settings.get('default_timeframe', '5min')}
+⏳ **فاصله‌ی بین سیگنال‌ها:** {settings.get('signal_cooldown_minutes', '15')} دقیقه
 
 🔒 **وضعیت ربات:** {'🔒 قفل' if settings.get('bot_locked') == 'true' else '🔓 باز'}
 🚀 **سیگنال:** {'✅ فعال' if settings.get('signal_enabled') == 'true' else '❌ غیرفعال'}
