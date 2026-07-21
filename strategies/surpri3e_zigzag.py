@@ -258,19 +258,16 @@ def get_zigzag_signal(df, depth=None, deviation=None):
     }
 
 
-def analyze(df, rr_override=None, mode='standard'):
+def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
     """
     تابع اصلی تحلیل - امضای استاندارد همه‌ی استراتژی‌های plugin.
 
     rr_override (float|None): اگه داده بشه (RR اختصاصی خود کاربر)،
         به‌جای RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
-        این رفع باگی است که قبلاً SL/TP واقعی همیشه با RR سراسری ساخته
-        می‌شد، در حالی که به کاربر RR شخصی‌اش نمایش داده می‌شد (ناهم‌خوانی).
 
-    mode (str): 'standard' یا 'fast_scalp'. در مود fast_scalp، فاصله‌ی
-        SL/TP به‌گونه‌ای محدود می‌شه که قیمت واقعاً بتونه ظرف چند دقیقه
-        (نه ساعت‌ها) بهش برسه - چون این باگ قبلاً باعث می‌شد اسکلپ روی
-        طلا عملاً مثل Standard رفتار کنه (زمان رسیدن به TP/SL خیلی طولانی).
+    ⚠️ تغییر مهم: فاصله‌ی SL دیگه بر اساس ATR محاسبه نمی‌شه - طبق تصمیم
+    پروژه، از یک فاصله‌ی پیپ ثابت و سراسری (قابل‌تنظیم فقط از پنل ادمین)
+    استفاده می‌شه که برای همه‌ی کاربران و همه‌ی نمادها یکسانه.
 
     خروجی: (signal: dict, analysis: dict) یا (None, None)
     """
@@ -296,65 +293,15 @@ def analyze(df, rr_override=None, mode='standard'):
     if rr_override is not None:
         rr_ratio = float(rr_override)
     else:
-        # ===== دیگه تنظیم سراسری rr_ratio وجود نداره (طبق تصمیم پروژه: =====
-        # ===== RR کاملاً به انتخاب خود کاربر/ادمین برای هر مود سپرده شده) =====
-        # این فقط یک fallback ایمن برای زمانیه که به هر دلیلی rr_override
-        # پاس داده نشده (نباید در جریان عادی اتفاق بیفته).
         rr_ratio = 2.0
 
     entry = round(current, 2)
 
-    # ===== فاصله‌ی اطمینان و کلمپ ریسک، بر اساس ATR واقعی همون کندل‌ها =====
-    # این‌طوری چه روی طلا (~4000$) چه بیت‌کوین (~65000$)، و چه تایم‌فریم
-    # ۱ دقیقه‌ای یا ۱ روزه، مقیاس ریسک با نوسان واقعی بازار هم‌خوانی داره.
-    atr = _calculate_atr(df)
+    # ===== فاصله‌ی استاپ: عدد ثابت سراسری از پنل ادمین (نه ATR) =====
+    from strategies.risk_common import get_stop_distance
+    risk = get_stop_distance(symbol)
 
-    if atr is not None:
-        sl_buffer = atr * SL_BUFFER_ATR_MULTIPLIER
-        min_risk = atr * MIN_RISK_ATR_MULTIPLIER
-        max_risk = atr * MAX_RISK_ATR_MULTIPLIER
-    else:
-        # ===== fallback نادر: دیتای کافی برای ATR نیست =====
-        sl_buffer = entry * FALLBACK_SL_BUFFER_PERCENT
-        min_risk = entry * FALLBACK_MIN_RISK_PERCENT
-        max_risk = entry * FALLBACK_MAX_RISK_PERCENT
-
-    if direction == "BUY":
-        raw_risk = entry - (zz['pivot_price'] - sl_buffer)
-    else:
-        raw_risk = (zz['pivot_price'] + sl_buffer) - entry
-
-    risk = max(min_risk, min(max_risk, raw_risk))
-
-    # ============================================================
-    # ⚠️ رفع باگ گزارش‌شده: با RR=2 مود اسکلپ درست بود، ولی RR=3 باعث
-    # می‌شد TP خیلی دور بشه و دیگه ظرف ۵ دقیقه قابل‌دسترس نباشه. علتش
-    # این بود که محدودیت زمانی فقط روی «risk» (فاصله‌ی SL) اعمال می‌شد،
-    # نه روی خودِ TP - و چون TP = risk × rr_ratio ساخته می‌شه، با RR
-    # بزرگ‌تر، TP به‌طور خطی از محدودیت زمانی فراتر می‌رفت.
-    #
-    # ✅ راه‌حل: در مود اسکلپ، فاصله‌ی TP (که risk × rr_ratio است) هم باید
-    # داخل همون سقف زمانی (scalp_max_distance) بمونه. اگه با RR درخواستی
-    # از سقف فراتر بره، «risk» رو طوری کوچک‌تر می‌کنیم که TP دقیقاً روی
-    # سقف زمانی بشینه - این‌طوری RR انتخابی کاربر حفظ می‌شه (نسبت SL:TP
-    # عوض نمی‌شه) ولی کل معامله (هم SL هم TP) داخل بازه‌ی ۵ دقیقه‌ای می‌مونه.
-    # ============================================================
-    if mode == 'fast_scalp':
-        scalp_max_distance = _estimate_scalp_max_distance(df)
-        if scalp_max_distance is not None and scalp_max_distance > 0:
-            implied_tp_distance = risk * rr_ratio
-            if implied_tp_distance > scalp_max_distance:
-                # ===== risk رو کوچک می‌کنیم تا TP دقیقاً روی سقف زمانی بشینه =====
-                # ===== نسبت RR درخواستی کاربر دست‌نخورده می‌مونه =====
-                # ⚠️ نکته‌ی مهم: کف این مقدار نباید از min_risk (که برای
-                # حالت عادی/غیر-اسکلپ تعریف شده) بیاد - چون min_risk هیچ
-                # ربطی به سقف زمانی نداره و می‌تونه از scalp_max_distance
-                # بزرگ‌تر باشه (که دقیقاً باعث همین باگ می‌شد: risk دوباره
-                # بالا کشیده می‌شد و از سقف زمانی رد می‌شد). به‌جاش فقط از
-                # صفر/منفی شدن مطلق جلوگیری می‌کنیم.
-                risk = max(scalp_max_distance / rr_ratio, entry * 0.00001)
-
-    # SL/TP نهایی همیشه از entry + risk نهایی (بعد از clamp) ساخته می‌شه
+    # SL/TP نهایی همیشه از entry + risk (فاصله‌ی ثابت سراسری) ساخته می‌شه
     if direction == "BUY":
         sl = round(entry - risk, 2)
         tp = round(entry + (risk * rr_ratio), 2)
