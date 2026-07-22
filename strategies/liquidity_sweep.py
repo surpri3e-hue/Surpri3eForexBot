@@ -299,9 +299,19 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
     else:
         rr_ratio = 2.0
 
-    # ===== فاصله‌ی استاپ: عدد ثابت سراسری از پنل ادمین (نه ATR) =====
+    # ===== فاصله‌ی استاپ: خودکار بر اساس نوسان واقعی بازار (ATR) =====
     from strategies.risk_common import get_stop_distance
-    risk = get_stop_distance(symbol)
+    atr_risk, sl_buffer = get_stop_distance(df, entry, symbol)
+
+    # ===== SL منطقی‌ترین جا: کمی پشت سطح sweep شده (جایی که نقدینگی گرفته شد) =====
+    swept_level = sweep['swept_level']
+    if direction == "BUY":
+        swept_based_risk = entry - (swept_level - sl_buffer)
+    else:
+        swept_based_risk = (swept_level + sl_buffer) - entry
+
+    # ===== فاصله‌ی نهایی: بزرگ‌تر از (فاصله‌ی سطح sweep شده، حداقل ATR) =====
+    risk = max(swept_based_risk, atr_risk)
 
     if direction == "BUY":
         sl = round(entry - risk, 2)
