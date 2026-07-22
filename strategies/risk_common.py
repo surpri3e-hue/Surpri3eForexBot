@@ -2,34 +2,88 @@
 # 📁 strategies/risk_common.py
 # 📌 توابع مشترک محاسبه‌ی ریسک بین همه‌ی استراتژی‌ها.
 #
-# ⚠️ تغییر مهم (۲۰۲۶-۰۷-۲۱): قبلاً هر استراتژی فاصله‌ی SL/TP رو از روی
-# ATR (نوسان واقعی کندل‌ها) محاسبه می‌کرد، و برای مود اسکلپ یک محدودیت
-# زمانی جداگانه هم داشت. طبق تصمیم پروژه، این منطق کاملاً با یک فاصله‌ی
-# پیپ ثابت و سراسری جایگزین شده که فقط از پنل ادمین قابل تنظیمه - همه‌ی
-# کاربران و همه‌ی نمادها همیشه از همین یک عدد استفاده می‌کنن.
+# ⚠️ تاریخچه‌ی تغییرات:
+# ابتدا فاصله‌ی SL/TP بر اساس ATR (نوسان واقعی کندل‌ها) بود. سپس طبق
+# یک تصمیم موقت، به یک فاصله‌ی پیپ ثابت و سراسری تغییر کرد. اما این باعث
+# شد کاربران پشت‌سرهم استاپ بخورند - چون در بازارهای پرنوسان (که طلا اغلب
+# همینه)، نوسان طبیعی قیمت به‌راحتی از فاصله‌ی ثابت بیشتر می‌شد و حتی
+# سیگنال‌های با جهت درست هم با یک نوسان طبیعی (نه برگشت واقعی روند)
+# استاپ می‌خوردند.
+#
+# ✅ راه‌حل نهایی: برگشت کامل به محاسبه‌ی خودکار بر اساس ATR - فاصله‌ی
+# استاپ همیشه متناسب با نوسان واقعی همون لحظه‌ی بازار تنظیم می‌شه، نه یک
+# عدد ثابت. دیگه هیچ تنظیم دستی پیپ از پنل ادمین وجود نداره.
 # ============================================================
 
+import numpy as np
 
-def get_stop_distance(symbol='XAU/USD'):
+ATR_PERIOD = 14                 # تعداد کندل برای محاسبه‌ی میانگین ATR (استاندارد صنعتی)
+MIN_RISK_ATR_MULTIPLIER = 0.5   # کف ریسک: حداقل نصف ATR
+MAX_RISK_ATR_MULTIPLIER = 4.0   # سقف ریسک: حداکثر ۴ برابر ATR
+SL_BUFFER_ATR_MULTIPLIER = 0.15  # فاصله‌ی اطمینان اضافه از خودِ نقطه‌ی pivot/sweep
+
+# ===== fallback در صورتی که ATR قابل محاسبه نباشه (دیتای خیلی کوتاه) =====
+FALLBACK_MIN_RISK_PERCENT = 0.0005
+FALLBACK_MAX_RISK_PERCENT = 0.02
+FALLBACK_SL_BUFFER_PERCENT = 0.0002
+
+
+def calculate_atr(df, period=ATR_PERIOD):
     """
-    فاصله‌ی استاپ (Entry تا SL) رو بر حسب واحد قیمتی (دلار) برمی‌گردونه.
+    محاسبه‌ی Average True Range روی دیتافریم کندلی.
 
-    محاسبه: (فاصله‌ی پیپ سراسری از پنل ادمین) × (ارزش هر پیپ برای این نماد)
+    True Range هر کندل = بزرگترین مقدار از سه حالت:
+      1. High - Low (دامنه‌ی خودِ کندل)
+      2. |High - Close قبلی|
+      3. |Low - Close قبلی|
 
-    مثال: اگه ادمین «stop_distance_pips=30» و «pip_value_xau=0.1» تنظیم
-    کرده باشه، برای طلا خروجی = 30 × 0.1 = 3.0 دلار فاصله.
+    ATR = میانگین متحرک True Range روی `period` کندل اخیر - این معیار
+    مستقیماً نوسان واقعی بازار رو تو همون لحظه و همون نماد نشون می‌ده.
 
-    خروجی: float - فاصله‌ی قیمتی بین Entry و SL
+    خروجی: عدد ATR (float) یا None اگه دیتا برای محاسبه کافی نباشه.
     """
-    from database import get_setting
+    if df is None or len(df) < period + 1:
+        return None
 
-    stop_pips = float(get_setting('stop_distance_pips') or '30')
+    high = df['High'].values
+    low = df['Low'].values
+    close = df['Close'].values
 
-    symbol_normalized = (symbol or 'XAU/USD').upper()
-    if 'BTC' in symbol_normalized:
-        pip_value = float(get_setting('pip_value_btc') or '1')
+    true_ranges = []
+    for i in range(1, len(df)):
+        hl = high[i] - low[i]
+        hc = abs(high[i] - close[i - 1])
+        lc = abs(low[i] - close[i - 1])
+        true_ranges.append(max(hl, hc, lc))
+
+    if len(true_ranges) < period:
+        return None
+
+    recent_tr = true_ranges[-period:]
+    atr = float(np.mean(recent_tr))
+    return atr if atr > 0 else None
+
+
+def get_stop_distance(df, entry_price, symbol='XAU/USD'):
+    """
+    فاصله‌ی استاپ (Entry تا SL) رو بر اساس نوسان واقعی بازار (ATR)
+    محاسبه می‌کنه - خودکار با هر نماد، هر تایم‌فریم، و هر شرایط بازاری
+    (آرام یا پرنوسان) سازگار می‌شه.
+
+    خروجی: (risk, sl_buffer) - هر دو بر حسب واحد قیمتی (دلار)
+        risk: فاصله‌ی اصلی بین Entry و SL
+        sl_buffer: فاصله‌ی اطمینان اضافه (برای گذاشتن SL کمی پشت‌تر از
+                   نقطه‌ی pivot/sweep، نه دقیقاً رویش)
+    """
+    atr = calculate_atr(df)
+
+    if atr is not None:
+        risk = max(atr * MIN_RISK_ATR_MULTIPLIER, min(atr * MAX_RISK_ATR_MULTIPLIER, atr * 1.5))
+        sl_buffer = atr * SL_BUFFER_ATR_MULTIPLIER
     else:
-        # ===== پیش‌فرض طلا/سایر نمادها =====
-        pip_value = float(get_setting('pip_value_xau') or '0.1')
+        # ===== fallback نادر: دیتای کافی برای ATR نیست =====
+        risk = entry_price * FALLBACK_MIN_RISK_PERCENT
+        sl_buffer = entry_price * FALLBACK_SL_BUFFER_PERCENT
 
-    return stop_pips * pip_value
+    return risk, sl_buffer
+
