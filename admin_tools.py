@@ -54,23 +54,6 @@ def set_daily_signal_limit(value):
         return "❌ لطفاً یک عدد معتبر وارد کنید."
 
 
-def set_stop_distance_pips(value):
-    """
-    تنظیم فاصله‌ی استاپ (بر حسب پیپ) که برای همه‌ی کاربران و همه‌ی
-    نمادها/تایم‌فریم‌ها به‌صورت یکسان اعمال می‌شه. جایگزین منطق قبلی
-    (ATR/محدودیت زمانی اسکلپ) شده - طبق تصمیم پروژه، فاصله‌ی استاپ الان
-    یک عدد ثابت سراسریه که فقط ادمین از این پنل تغییرش می‌ده.
-    """
-    try:
-        value = float(value)
-        if value <= 0:
-            return "❌ مقدار باید بزرگتر از صفر باشد."
-        update_setting('stop_distance_pips', str(value))
-        return f"✅ فاصله‌ی استاپ (Entry تا SL) برای همه‌ی کاربران به {value} پیپ تغییر کرد."
-    except Exception:
-        return "❌ لطفاً یک عدد معتبر وارد کنید."
-
-
 def set_default_timeframe(value):
     """
     تنظیم تایم‌فریم پیش‌فرض سراسری که برای همه‌ی کاربران اعمال می‌شه.
@@ -142,7 +125,6 @@ def dashboard():
 👥 **کاربران:** {users}
 📈 **فعال امروز:** {active}
 📊 **سیگنال روزانه:** {settings.get('daily_signal_limit', '5')}
-📏 **فاصله‌ی استاپ:** {settings.get('stop_distance_pips', '30')} پیپ
 ⏱️ **تایم‌فریم پیش‌فرض:** {settings.get('default_timeframe', '5min')}
 ⏳ **فاصله‌ی بین سیگنال‌ها:** {settings.get('signal_cooldown_minutes', '15')} دقیقه
 
