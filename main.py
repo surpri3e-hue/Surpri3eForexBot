@@ -294,10 +294,7 @@ def admin_keyboard():
         ],
         [InlineKeyboardButton("📊 Reports", callback_data="reports")],
         [
-            InlineKeyboardButton("📏 فاصله‌ی استاپ (پیپ)", callback_data="set_stop_distance"),
             InlineKeyboardButton("⏱️ تایم‌فریم پیش‌فرض", callback_data="set_default_timeframe"),
-        ],
-        [
             InlineKeyboardButton("⏳ فاصله‌ی بین سیگنال‌ها", callback_data="set_signal_cooldown"),
         ],
         [InlineKeyboardButton("🔙 برگشت", callback_data="back")]
@@ -1102,21 +1099,6 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['admin_action'] = 'set_daily_signal'
         return
 
-    if data == "set_stop_distance":
-        if user_id != ADMIN_ID:
-            return
-        current = get_setting('stop_distance_pips') or '30'
-        await query.edit_message_text(
-            f"📏 **فاصله‌ی استاپ (پیپ)**\n\n"
-            f"فعلی: {current} پیپ\n\n"
-            f"این فاصله بین Entry و SL برای همه‌ی کاربران و همه‌ی نمادها یکسان اعمال می‌شود.\n"
-            f"عدد پیپ جدید را وارد کنید (مثلاً 30):",
-            reply_markup=admin_keyboard(),
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_action'] = 'set_stop_distance'
-        return
-
     if data == "set_default_timeframe":
         if user_id != ADMIN_ID:
             return
@@ -1646,13 +1628,6 @@ async def handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             else:
                 await update.message.reply_text("❌ **لطفاً آیدی عددی وارد کنید.**", reply_markup=admin_keyboard(), parse_mode='Markdown')
             context.user_data['admin_action'] = None
-            return
-
-        if action == 'set_stop_distance':
-            context.user_data['admin_action'] = None
-            from admin_tools import set_stop_distance_pips
-            result = set_stop_distance_pips(text.replace(',', '.'))
-            await update.message.reply_text(result, reply_markup=admin_keyboard(), parse_mode='Markdown')
             return
 
         if action == 'set_default_timeframe':
