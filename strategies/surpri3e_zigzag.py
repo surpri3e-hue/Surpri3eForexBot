@@ -265,9 +265,10 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
     rr_override (float|None): اگه داده بشه (RR اختصاصی خود کاربر)،
         به‌جای RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
 
-    ⚠️ تغییر مهم: فاصله‌ی SL دیگه بر اساس ATR محاسبه نمی‌شه - طبق تصمیم
-    پروژه، از یک فاصله‌ی پیپ ثابت و سراسری (قابل‌تنظیم فقط از پنل ادمین)
-    استفاده می‌شه که برای همه‌ی کاربران و همه‌ی نمادها یکسانه.
+    ⚠️ فاصله‌ی SL بر اساس ATR (نوسان واقعی همون لحظه‌ی بازار) محاسبه
+    می‌شه - خودکار با هر نماد، تایم‌فریم، و شرایط بازار (آرام یا
+    پرنوسان) سازگار می‌شه، تا نوسان طبیعی قیمت باعث خوردن پشت‌سرهم
+    استاپ نشه.
 
     خروجی: (signal: dict, analysis: dict) یا (None, None)
     """
@@ -297,11 +298,20 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
 
     entry = round(current, 2)
 
-    # ===== فاصله‌ی استاپ: عدد ثابت سراسری از پنل ادمین (نه ATR) =====
+    # ===== فاصله‌ی استاپ: خودکار بر اساس نوسان واقعی بازار (ATR) =====
     from strategies.risk_common import get_stop_distance
-    risk = get_stop_distance(symbol)
+    atr_risk, sl_buffer = get_stop_distance(df, entry, symbol)
 
-    # SL/TP نهایی همیشه از entry + risk (فاصله‌ی ثابت سراسری) ساخته می‌شه
+    # ===== SL منطقی‌ترین جا: پشت نقطه‌ی pivot با یک بافر اطمینان (ATR-based) =====
+    if direction == "BUY":
+        pivot_based_risk = entry - (zz['pivot_price'] - sl_buffer)
+    else:
+        pivot_based_risk = (zz['pivot_price'] + sl_buffer) - entry
+
+    # ===== فاصله‌ی نهایی: بزرگ‌تر از (فاصله‌ی پیوت، حداقل ATR) تا هم منطق =====
+    # ===== ساختاری حفظ بشه هم زیر کف نوسان طبیعی بازار نره =====
+    risk = max(pivot_based_risk, atr_risk)
+
     if direction == "BUY":
         sl = round(entry - risk, 2)
         tp = round(entry + (risk * rr_ratio), 2)
