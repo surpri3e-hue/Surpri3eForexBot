@@ -208,7 +208,7 @@ def create_database():
         tp REAL,
         result TEXT DEFAULT 'OPEN',
         user_id INTEGER DEFAULT 0,
-        style TEXT DEFAULT 'ICT',
+        style TEXT DEFAULT 'equal_liquidity',
         strength TEXT DEFAULT 'NORMAL',
         symbol TEXT DEFAULT 'XAU/USD'
     )
@@ -224,7 +224,7 @@ def create_database():
         joined_at TEXT,
         last_active TEXT,
         lang TEXT DEFAULT 'fa',
-        style TEXT DEFAULT 'surpri3e',
+        style TEXT DEFAULT 'equal_liquidity',
         is_vip INTEGER DEFAULT 0,
         referral_count INTEGER DEFAULT 0,
         referred_by INTEGER DEFAULT 0,
@@ -330,10 +330,15 @@ def create_database():
     )
     """)
 
-    # ===== migration: کاربرانی که از قبل با style قدیمی (ICT/SMC) ثبت شدن =====
-    # چون signals.py دیگه فقط SURPRI3E رو می‌شناسه، این کاربرا باید بروزرسانی بشن
-    # وگرنه create_signal همیشه None برمی‌گردونه (باگی که باعث "سیگنال نمی‌ده" می‌شد)
-    cursor.execute("UPDATE users SET style='surpri3e' WHERE style IS NULL OR style IN ('ICT', 'SMC')")
+    # ===== migration: کاربرانی که از قبل با style قدیمی ثبت شدن =====
+    # چون signals.py دیگه SURPRI3E و Liquidity Sweep قدیمی رو نمی‌شناسه
+    # (بک‌تست هر دو ضررده بود و حذف شدن)، این کاربرا باید به استراتژی
+    # جدید equal_liquidity منتقل بشن - وگرنه create_signal همیشه None
+    # برمی‌گردونه (باگی که باعث "سیگنال نمی‌ده" می‌شد)
+    cursor.execute(
+        "UPDATE users SET style='equal_liquidity' "
+        "WHERE style IS NULL OR style IN ('ICT', 'SMC', 'surpri3e', 'liquidity_sweep')"
+    )
 
     # ===== تنظیمات پیش‌فرض =====
     default_settings = [
@@ -642,8 +647,9 @@ def get_user_style(user_id):
     cursor.execute("SELECT style FROM users WHERE id=?", (user_id,))
     result = cursor.fetchone()
     conn.close()
-    # پیش‌فرض SURPRI3E است، نه ICT قدیمی که دیگر signals.py آن را نمی‌شناسد
-    return result[0] if result and result[0] else 'surpri3e'
+    # پیش‌فرض equal_liquidity است - استراتژی‌های قدیمی (surpri3e،
+    # liquidity_sweep) بک‌تست ضررده بودن و حذف شدن
+    return result[0] if result and result[0] else 'equal_liquidity'
 
 
 def is_user_vip(user_id):
