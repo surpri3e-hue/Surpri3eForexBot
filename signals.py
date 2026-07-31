@@ -12,13 +12,13 @@
 from strategy_registry import run_strategy
 
 
-def create_signal(df, style='surpri3e', rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
+def create_signal(df, style='equal_liquidity', rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
     """
     دریافت سیگنال بر اساس استراتژی انتخابی.
 
     پارامترها:
         df (DataFrame): دیتای کندلی قیمت طلا
-        style (str): شناسه‌ی استراتژی (مثلاً 'surpri3e')
+        style (str): شناسه‌ی استراتژی (مثلاً 'equal_liquidity')
         rr_override (float|None): RR اختصاصی کاربر - اگه داده بشه، به‌جای
             RR سراسری تنظیمات ربات برای محاسبه‌ی SL/TP استفاده می‌شه.
         mode (str): 'standard' یا 'fast_scalp' - در مود اسکلپ فاصله‌ی
@@ -34,9 +34,12 @@ def create_signal(df, style='surpri3e', rr_override=None, mode='standard', symbo
     if df is None or len(df) < 30:
         return None, None
 
-    # سازگاری با مقادیر قدیمی که ممکنه هنوز تو دیتابیس کاربرها باشه
-    style_normalized = style.lower() if style else 'surpri3e'
-    if style_normalized in ('surpri3e', 'ict', 'smc'):
-        style_normalized = 'surpri3e'
+    # ===== سازگاری با مقادیر قدیمی که ممکنه هنوز تو دیتابیس کاربرها باشه =====
+    # 'surpri3e' و 'liquidity_sweep' در بک‌تست ضررده بودن و حذف شدن؛
+    # کاربرهایی که این مقادیر رو قبلاً انتخاب کرده بودن، خودکار به
+    # استراتژی جدید equal_liquidity هدایت می‌شن تا بی‌سیگنال نمونن.
+    style_normalized = style.lower() if style else 'equal_liquidity'
+    if style_normalized in ('surpri3e', 'liquidity_sweep', 'ict', 'smc'):
+        style_normalized = 'equal_liquidity'
 
     return run_strategy(style_normalized, df, rr_override=rr_override, mode=mode, symbol=symbol, timeframe=timeframe)
