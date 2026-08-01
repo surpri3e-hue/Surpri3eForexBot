@@ -117,7 +117,7 @@ def get_gold_candles(timeframe="5min", count=50, symbol="XAU/USD"):
             df_data = []
             for candle in data["values"]:
                 dt = pd.to_datetime(candle['datetime'])
-                dt_tehran = dt.astimezone(TEHRAN_TZ)
+                dt_tehran = dt.astimezone(TEHRAN_TZ) if dt.tzinfo else TEHRAN_TZ.localize(dt)
 
                 df_data.append({
                     'Date': dt_tehran,
