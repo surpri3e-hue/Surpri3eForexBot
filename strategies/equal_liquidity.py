@@ -11,26 +11,10 @@
 # باطل می‌شود - دقیقاً مطابق پارامتر "Invalidate Zone on Wick: false"
 # در تنظیمات اندیکاتور مرجع.
 #
-# مراحل تشخیص ستاپ (هر چهار شرط باید برقرار باشند):
-#   1) Equal Highs/Lows: حداقل دو سقف (یا دو کف) در یک بازه‌ی اخیر
-#      که اختلافشان کمتر از تلورانسِ (Equal Tolerance × ATR) باشد -
-#      این سطح، یک منطقه‌ی تجمع نقدینگی (استاپ‌های خوابیده) است.
-#   2) Liquidity Sweep: یک کندل بعدی با فتیله از آن سطح Equal High/Low
-#      عبور می‌کند (نقدینگی برداشته می‌شود) اما Close آن کندل داخل
-#      محدوده برمی‌گردد - شکست کاذب، نه شکست واقعی.
-#   3) Engulfing Confirmation: کندل بعد از Sweep (یا خودِ کندل Sweep)
-#      باید بدنه‌ی کندل قبلی را کامل Engulf کند، در جهت مخالفِ Sweep -
-#      این تأیید می‌کند بازگشت واقعی در حال شکل‌گیری است، نه فقط یک فتیله.
-#   4) Zone Size Filter: فاصله‌ی بین سطح Equal و نقطه‌ی Engulf از
-#      (Max Zone Size × ATR) بزرگ‌تر نباشد - زون‌های خیلی بزرگ = نویز/
-#      بی‌اعتبار، دقیقاً مطابق پارامتر "Max Zone Size (ATR)" در تنظیمات
-#      اندیکاتور مرجع.
-#
 # ⚠️ توضیح صادقانه: این یک پیاده‌سازی مستقل از صفر است بر اساس مفاهیم
 # عمومی و شناخته‌شده‌ی Equal Highs/Lows + Liquidity Sweep + Engulfing
-# که در تحلیل تکنیکال رایج هستند (مشابه نام پارامترهای اندیکاتور
-# MT5 که کاربر نشان داد) - نه رونویسی یا مهندسی معکوس از کد کامپایل‌شده‌ی
-# آن اندیکاتور.
+# که در تحلیل تکنیکال رایج هستند - نه رونویسی یا مهندسی معکوس از کد
+# کامپایل‌شده‌ی هیچ اندیکاتوری.
 # ============================================================
 
 import numpy as np
@@ -176,12 +160,34 @@ def _is_engulfing(prev_open, prev_close, curr_open, curr_close, direction):
 
 def detect_equal_liquidity_setup(df, lookback=30, equal_tolerance_atr=0.5, max_zone_atr=2.0, max_sweep_age=3):
     """
-    منطق اصلی: Equal High/Low -> Liquidity Sweep -> Engulfing Confirmation.
+    منطق لیمیت اوردر: فقط یک سطح Equal High/Low معتبر پیدا می‌کنه که
+    هنوز لمس/باطل نشده - سطح رو به‌عنوان نقطه‌ی لیمیت برمی‌گردونه.
 
-    خروجی: dict با کلیدهای direction, equal_level, sweep_price,
-    engulf_candles_ago, zone_size یا None اگه ستاپ معتبری پیدا نشه.
+    ⚠️ تغییر معماری نسبت به نسخه‌ی قبلی (لحظه‌ای/instant):
+    قبلاً منتظر می‌موند Equal High/Low + Sweep + Engulf همه هم‌زمان
+    (روی چند کندل آخر) کامل بشن - این در دیتای واقعی به‌ندرت پیش میاد
+    چون این سه رویداد معمولاً در سه لحظه‌ی متفاوت اتفاق می‌افتن، نه
+    هم‌زمان. نتیجه: ربات عملاً هیچ‌وقت سیگنال نمی‌داد.
+
+    ✅ راه‌حل: به‌محض شناسایی خودِ سطح Equal (بدون نیاز به sweep یا
+    engulf که هنوز اتفاق نیفتاده)، سطح رو به‌عنوان یک Limit Order
+    برمی‌گردونیم. ربات این سطح رو ذخیره می‌کنه و منتظر می‌مونه قیمت
+    در آینده (نه لزوماً همین لحظه) به اون سطح برسه - دقیقاً مثل
+    گذاشتن سفارش لیمیت واقعی روی نقدینگی.
+
+    جهت معامله:
+      - سطح Equal Low  -> BUY  (قیمت که به کف برسه، انتظار برگشت به بالا)
+      - سطح Equal High -> SELL (قیمت که به سقف برسه، انتظار برگشت به پایین)
+
+    خروجی: dict با کلیدهای direction, equal_level, zone_size(=0، چون
+    هنوز sweep واقعی رخ نداده), touches یا None اگه هیچ سطح معتبری
+    پیدا نشه.
+
+    ⚠️ اگه چند سطح Equal (هم High هم Low) هم‌زمان پیدا بشن، سطحی که
+    بیشترین touches (تعداد لمس) رو داره اولویت داره - چون سطح با
+    لمس بیشتر، نقدینگی بیشتری جمع کرده و احتمال واکنش قیمت روش بالاتره.
     """
-    min_len = lookback + max_sweep_age + 5
+    min_len = lookback + 5
     if df is None or len(df) < min_len:
         return None
 
@@ -190,86 +196,62 @@ def detect_equal_liquidity_setup(df, lookback=30, equal_tolerance_atr=0.5, max_z
         return None
 
     equal_tolerance = atr * equal_tolerance_atr
-    max_zone_size = atr * max_zone_atr
 
     highs = df['High'].values
     lows = df['Low'].values
     closes = df['Close'].values
-    opens = df['Open'].values if 'Open' in df.columns else closes
 
     n = len(df)
+    window_start = max(0, n - lookback)
+    window_highs = highs[window_start:n]
+    window_lows = lows[window_start:n]
+    last_close = closes[-1]
 
-    for candles_ago in range(1, max_sweep_age + 1):
-        engulf_idx = n - candles_ago
-        if engulf_idx < lookback + 2:
-            continue
+    candidates = []
 
-        window_start = max(0, engulf_idx - lookback - 1)
-        window_end = engulf_idx - 1
-        if window_end - window_start < 5:
-            continue
+    # ===================== کاندید SELL: سطح Equal High =====================
+    equal_high, high_matches = _find_equal_level(window_highs, equal_tolerance, find_max=True)
+    if equal_high is not None:
+        # ===== اگه قیمت همین الان (با Close) از سطح رد شده باشه، سطح باطل شده - نادیده بگیر =====
+        # (طبق پارامتر "Invalidate Zone on Wick: false" در اندیکاتور مرجع:
+        # فقط Close می‌تونه باطل کنه، نه فتیله)
+        if last_close < equal_high:
+            candidates.append({
+                'direction': 'SELL',
+                'equal_level': round(float(equal_high), 5),
+                'zone_size': 0.0,
+                'touches': len(high_matches),
+            })
 
-        prior_highs = highs[window_start:window_end]
-        prior_lows = lows[window_start:window_end]
+    # ===================== کاندید BUY: سطح Equal Low =====================
+    equal_low, low_matches = _find_equal_level(window_lows, equal_tolerance, find_max=False)
+    if equal_low is not None:
+        if last_close > equal_low:
+            candidates.append({
+                'direction': 'BUY',
+                'equal_level': round(float(equal_low), 5),
+                'zone_size': 0.0,
+                'touches': len(low_matches),
+            })
 
-        # ===================== سناریوی SELL =====================
-        equal_high, high_matches = _find_equal_level(prior_highs, equal_tolerance, find_max=True)
-        if equal_high is not None:
-            for sweep_candidate in (engulf_idx - 1, engulf_idx):
-                if sweep_candidate < window_end:
-                    continue
-                if highs[sweep_candidate] > equal_high and closes[sweep_candidate] < equal_high:
-                    zone_size = highs[sweep_candidate] - equal_high
-                    if zone_size > max_zone_size:
-                        continue
-                    prev_i = sweep_candidate
-                    curr_i = sweep_candidate + 1 if sweep_candidate + 1 <= engulf_idx else sweep_candidate
-                    if curr_i == prev_i:
-                        continue
-                    if curr_i >= n:
-                        continue
-                    if _is_engulfing(opens[prev_i], closes[prev_i], opens[curr_i], closes[curr_i], "SELL"):
-                        return {
-                            'direction': 'SELL',
-                            'equal_level': round(float(equal_high), 5),
-                            'sweep_price': round(float(highs[sweep_candidate]), 5),
-                            'zone_size': round(float(zone_size), 5),
-                            'engulf_candles_ago': n - 1 - curr_i,
-                            'touches': len(high_matches),
-                        }
+    if not candidates:
+        return None
 
-        # ===================== سناریوی BUY =====================
-        equal_low, low_matches = _find_equal_level(prior_lows, equal_tolerance, find_max=False)
-        if equal_low is not None:
-            for sweep_candidate in (engulf_idx - 1, engulf_idx):
-                if sweep_candidate < window_end:
-                    continue
-                if lows[sweep_candidate] < equal_low and closes[sweep_candidate] > equal_low:
-                    zone_size = equal_low - lows[sweep_candidate]
-                    if zone_size > max_zone_size:
-                        continue
-                    prev_i = sweep_candidate
-                    curr_i = sweep_candidate + 1 if sweep_candidate + 1 <= engulf_idx else sweep_candidate
-                    if curr_i == prev_i:
-                        continue
-                    if curr_i >= n:
-                        continue
-                    if _is_engulfing(opens[prev_i], closes[prev_i], opens[curr_i], closes[curr_i], "BUY"):
-                        return {
-                            'direction': 'BUY',
-                            'equal_level': round(float(equal_low), 5),
-                            'sweep_price': round(float(lows[sweep_candidate]), 5),
-                            'zone_size': round(float(zone_size), 5),
-                            'engulf_candles_ago': n - 1 - curr_i,
-                            'touches': len(low_matches),
-                        }
-
-    return None
+    # ===== انتخاب سطح با بیشترین touches (نقدینگی بیشتر = اولویت بالاتر) =====
+    candidates.sort(key=lambda c: c['touches'], reverse=True)
+    return candidates[0]
 
 
 def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='5min'):
     """
     تابع اصلی تحلیل - امضای استاندارد همه‌ی استراتژی‌های plugin.
+
+    ⚠️ خروجی این نسخه یک سیگنال LIMIT است، نه سیگنال لحظه‌ای:
+    signal['entry'] قیمتی است که هنوز به آن نرسیده‌ایم (سطح Equal
+    High/Low) - نه قیمت فعلی بازار. main.py باید این سیگنال را به‌عنوان
+    یک لیمیت اوردر معلق (PENDING) ذخیره کند، نه یک معامله‌ی بلافاصله باز.
+    signal['signal_type'] = 'LIMIT' این تمایز را مشخص می‌کند.
+
     خروجی: (signal: dict, analysis: dict) یا (None, None)
     """
     if df is None or len(df) < 30:
@@ -293,8 +275,8 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
         return None, None
 
     direction = setup['direction']
-    current = float(df['Close'].iloc[-1])
-    entry = round(current, 2)
+    # ===== entry = خودِ سطح Equal (نقطه‌ی لیمیت)، نه قیمت لحظه‌ای =====
+    entry = setup['equal_level']
 
     if rr_override is not None:
         rr_ratio = float(rr_override)
@@ -304,13 +286,8 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
     from strategies.risk_common import get_stop_distance
     atr_risk, sl_buffer = get_stop_distance(df, entry, symbol)
 
-    sweep_price = setup['sweep_price']
-    if direction == "BUY":
-        sweep_based_risk = entry - (sweep_price - sl_buffer)
-    else:
-        sweep_based_risk = (sweep_price + sl_buffer) - entry
-
-    risk = max(sweep_based_risk, atr_risk)
+    # ===== SL کمی پشت‌تر از خودِ سطح Equal (جایی که نقدینگی جمع شده) =====
+    risk = atr_risk + sl_buffer
 
     if direction == "BUY":
         sl = round(entry - risk, 2)
@@ -319,22 +296,19 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
         sl = round(entry + risk, 2)
         tp = round(entry - (risk * rr_ratio), 2)
 
-    strength = 'NORMAL' if (setup['engulf_candles_ago'] <= 1 and setup['touches'] >= 2) else 'WEAK'
+    strength = 'NORMAL' if setup['touches'] >= 2 else 'WEAK'
 
     rr_display = f"1:{rr_ratio:g}"
     reasons = [
-        f"Equal {'Lows' if direction == 'BUY' else 'Highs'} ✅ ({setup['equal_level']:.2f} · {setup['touches']} touches)",
-        f"Liquidity Sweep ✅ ({setup['sweep_price']:.2f})",
-        f"Engulfing Confirmation ✅ ({setup['engulf_candles_ago']} candles ago)",
-        f"Zone Size ✅ ({setup['zone_size']:.2f})",
+        f"Equal {'Lows' if direction == 'BUY' else 'Highs'} ✅ ({entry:.2f} · {setup['touches']} touches)",
+        f"نوع سفارش: Limit Order (منتظر رسیدن قیمت به سطح)",
         f"Risk/Reward: {rr_display} ✅",
     ]
 
     if strength == 'WEAK':
         import logging
         logging.getLogger(__name__).info(
-            f"سیگنال Equal Liquidity با strength=WEAK صادر شد "
-            f"(engulf {setup['engulf_candles_ago']} کندل قبل، touches={setup['touches']})."
+            f"سیگنال لیمیت Equal Liquidity با strength=WEAK صادر شد (touches={setup['touches']})."
         )
 
     if not is_real:
@@ -350,6 +324,7 @@ def analyze(df, rr_override=None, mode='standard', symbol='XAU/USD', timeframe='
         'sl': sl,
         'tp': tp,
         'strength': strength,
+        'signal_type': 'LIMIT',
     }
 
     analysis = {
