@@ -292,6 +292,24 @@ def create_database():
     if not _column_exists(cursor, "trades", "symbol"):
         cursor.execute("ALTER TABLE trades ADD COLUMN symbol TEXT DEFAULT 'XAU/USD'")
 
+    # ===== migration: پشتیبانی از لیمیت اوردر (سیگنال معلق تا رسیدن قیمت) =====
+    # قبلاً سیگنال فقط لحظه‌ای بود (یا همین الان ستاپ کامل بود، یا هیچی).
+    # چون در دیتای واقعی به‌ندرت Equal+Sweep+Engulf دقیقاً هم‌زمان کامل
+    # می‌شد، عملاً سیگنال داده نمی‌شد. حالا به‌محض شناسایی سطح Equal
+    # High/Low، یک معامله با result='PENDING' ثبت می‌شه و منتظر می‌مونه
+    # قیمت به سطح لیمیت برسه - دقیقاً مثل یک Limit Order واقعی.
+    if not _column_exists(cursor, "trades", "timeframe"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN timeframe TEXT DEFAULT '5min'")
+
+    if not _column_exists(cursor, "trades", "limit_price"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN limit_price REAL")
+
+    if not _column_exists(cursor, "trades", "expires_at"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN expires_at TEXT")
+
+    if not _column_exists(cursor, "trades", "created_at"):
+        cursor.execute("ALTER TABLE trades ADD COLUMN created_at TEXT")
+
     # ===== migration: پلن و تاریخ انقضای VIP =====
     if not _column_exists(cursor, "users", "vip_plan"):
         cursor.execute("ALTER TABLE users ADD COLUMN vip_plan TEXT")
@@ -1132,6 +1150,116 @@ def get_open_trades():
         }
         for r in rows
     ]
+
+
+# ============ لیمیت اوردر (سیگنال معلق) ============
+def save_pending_trade(signal, user_id=0, style='equal_liquidity', strength='NORMAL',
+                        symbol='XAU/USD', timeframe='5min', expires_at=None):
+    """
+    ثبت یک لیمیت اوردر جدید (result='PENDING') - هنوز وارد معامله نشدیم،
+    فقط منتظریم قیمت به signal['entry'] (سطح Equal High/Low) برسه.
+
+    limit_price همون entry سیگنال است؛ SL/TP از قبل بر اساس همون سطح
+    محاسبه و ثابت می‌مونن (طبق خواسته‌ی کاربر: تصمیم عوض نشه).
+    expires_at: رشته‌ی ISO datetime - بعد از این زمان، اگه لمس نشده
+    بود، لیمیت به‌صورت خودکار EXPIRED می‌شه.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+
+    trade_id = _insert_returning_id("""
+    INSERT INTO trades (time, direction, entry, sl, tp, result, user_id, style,
+                         strength, symbol, timeframe, limit_price, expires_at, created_at)
+    VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    """, (
+        datetime.now().strftime("%Y-%m-%d %H:%M"),
+        signal["direction"],
+        signal["entry"],
+        signal["sl"],
+        signal["tp"],
+        "PENDING",
+        user_id,
+        style,
+        strength,
+        symbol,
+        timeframe,
+        signal["entry"],
+        expires_at,
+        datetime.now().isoformat()
+    ), cursor)
+
+    conn.commit()
+    conn.close()
+    return trade_id
+
+
+def get_pending_trades(symbol=None):
+    """
+    همه‌ی لیمیت اوردرهای در انتظار (result='PENDING') رو برمی‌گردونه.
+    اگه symbol داده بشه، فقط لیمیت‌های همون نماد رو برمی‌گردونه - برای
+    این‌که موقع چک قیمت یک نماد، مجبور نباشیم قیمت نمادهای دیگه رو هم بگیریم.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    if symbol:
+        cursor.execute("""
+            SELECT id, user_id, direction, entry, sl, tp, symbol, timeframe, expires_at, style, strength
+            FROM trades WHERE result='PENDING' AND symbol=?
+        """, (symbol,))
+    else:
+        cursor.execute("""
+            SELECT id, user_id, direction, entry, sl, tp, symbol, timeframe, expires_at, style, strength
+            FROM trades WHERE result='PENDING'
+        """)
+    rows = cursor.fetchall()
+    conn.close()
+    return [
+        {
+            'id': r[0], 'user_id': r[1], 'direction': r[2], 'entry': r[3],
+            'sl': r[4], 'tp': r[5], 'symbol': r[6] if r[6] else 'XAU/USD',
+            'timeframe': r[7] if r[7] else '5min', 'expires_at': r[8],
+            'style': r[9], 'strength': r[10]
+        }
+        for r in rows
+    ]
+
+
+def activate_pending_trade(trade_id):
+    """
+    وقتی قیمت به سطح لیمیت رسید، وضعیت از PENDING به OPEN تغییر می‌کنه -
+    از این لحظه به بعد auto_tracker طبق روال معمول TP/SL این معامله رو چک می‌کنه.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE trades SET result='OPEN' WHERE id=? AND result='PENDING'", (trade_id,))
+    conn.commit()
+    conn.close()
+
+
+def expire_pending_trade(trade_id):
+    """
+    وقتی سقف زمانی یک لیمیت اوردر بدون لمس شدن تموم بشه، وضعیتش رو
+    EXPIRED می‌کنیم - نه TP نه SL، فقط دیگه معتبر نیست.
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("UPDATE trades SET result='EXPIRED' WHERE id=? AND result='PENDING'", (trade_id,))
+    conn.commit()
+    conn.close()
+
+
+def count_active_pending_trades(user_id):
+    """
+    تعداد لیمیت‌های در انتظار یک کاربر رو می‌شماره - برای رعایت سقف
+    حداکثر ۳ لیمیت هم‌زمان (طبق تصمیم معماری، تا فرصت‌های خوب زیادی از
+    دست نره ولی هم‌زمان ریسک بیش‌ازحد باز نشه).
+    """
+    conn = connect()
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM trades WHERE user_id=? AND result='PENDING'", (user_id,))
+    result = cursor.fetchone()
+    conn.close()
+    return result[0] if result else 0
 
 
 def get_user_trades(user_id=0):
