@@ -2,7 +2,7 @@ import os
 import logging
 import asyncio
 from concurrent.futures import ThreadPoolExecutor
-from datetime import datetime
+from datetime import datetime, timedelta
 import pytz
 from telegram import (
     Update,
@@ -87,6 +87,8 @@ from database import (
     set_vip_card_info,
     get_vip_card_info,
     get_user_display_info,
+    save_pending_trade,
+    count_active_pending_trades,
 )
 
 from settings import init_settings, get_settings
@@ -423,6 +425,50 @@ async def send_signal(bot, chat_id, trade_id, signal, analysis, df, timeframe, u
         )
 
 
+# ============ ارسال سیگنال لیمیت (Pending) ============
+async def send_limit_signal(bot, chat_id, trade_id, signal, analysis, timeframe, lang='fa', symbol='XAU/USD'):
+    """
+    اطلاع‌رسانی یک لیمیت اوردر تازه ثبت‌شده - برخلاف send_signal، اینجا
+    معامله هنوز باز نشده؛ فقط منتظریم قیمت به سطح signal['entry'] برسه.
+    وقتی قیمت لمس کرد، auto_tracker خودکار پیام «معامله باز شد» را
+    جداگانه می‌فرستد (نگاه کن به check_pending_trades_once).
+    """
+    tehran_time = get_tehran_time()
+    entry = signal['entry']
+    sl = signal['sl']
+    tp = signal['tp']
+    rr_ratio = get_user_rr(chat_id, mode='standard')
+
+    reasons_text = "\n".join([f"• {r}" for r in analysis.get('reasons', [])])
+    style = analysis.get('style', 'Equal Liquidity')
+
+    message = f"""
+⏳ **LIMIT ORDER PLACED**
+
+**💱 Symbol:** {symbol}
+**📊 Strategy:** {style}
+**📈 Direction:** {'🟢 BUY' if signal['direction'] == 'BUY' else '🔴 SELL'} (منتظر رسیدن قیمت)
+**📍 Limit Entry:** {entry:.2f}
+**🛑 Stop Loss:** {sl:.2f}
+**🎯 Take Profit:** {tp:.2f}
+**🎯 Risk/Reward:** 1:{rr_ratio:.1f}
+
+**📝 Reasons:**
+{reasons_text}
+
+⏱️ **Timeframe:** {timeframe}
+🕐 **Time:** {tehran_time.strftime('%Y-%m-%d %H:%M:%S')}
+
+ℹ️ این یک سفارش لیمیت است - وقتی قیمت به {entry:.2f} برسه، به‌صورت خودکار معامله باز و اطلاع‌رسانی می‌شه. جهت این سیگنال دیگه تغییر نمی‌کنه.
+"""
+
+    try:
+        await bot.send_message(chat_id=chat_id, text=message, parse_mode='Markdown')
+    except Exception as e:
+        logger.warning(f"ارسال پیام لیمیت با Markdown ناموفق بود، تلاش دوباره بدون فرمت‌دهی: {e}")
+        await bot.send_message(chat_id=chat_id, text=message.replace('*', '').replace('_', '').replace('`', ''))
+
+
 # ============ دستور /start ============
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -692,38 +738,69 @@ async def button(update: Update, context: ContextTypes.DEFAULT_TYPE):
             if df is not None and not df.empty:
                 if signal:
                     strength = signal.get('strength', 'NORMAL')
+                    is_limit_signal = signal.get('signal_type') == 'LIMIT'
 
-                    # ===== به‌روزرسانی entry/sl/tp با قیمت لحظه‌ای واقعی قبل از ذخیره =====
-                    # این کار باید قبل از save_trade انجام بشه، وگرنه دیتابیس (و چک
-                    # خودکار TP/SL) با اعداد قدیمی کار می‌کنه که با چیزی که به
-                    # کاربر نشون داده می‌شه فرق داره.
-                    live_price = await _run_in_signal_thread(get_current_price, symbol)
-                    if not live_price:
-                        live_price = df['Close'].iloc[-1]
-
-                    risk_distance = abs(signal['entry'] - signal['sl'])
-                    reward_distance = abs(signal['tp'] - signal['entry'])
-                    new_entry = round(float(live_price), 2)
-
-                    if signal['direction'] == 'BUY':
-                        signal['sl'] = round(new_entry - risk_distance, 2)
-                        signal['tp'] = round(new_entry + reward_distance, 2)
-                    else:
-                        signal['sl'] = round(new_entry + risk_distance, 2)
-                        signal['tp'] = round(new_entry - reward_distance, 2)
-                    signal['entry'] = new_entry
-
-                    trade_id = save_trade(signal, user_id, style, strength, symbol=symbol)
-                    use_signal(user_id)
-                    record_signal_time(user_id, timeframe)  # ثبت زمان برای cooldown بعدی
-
-                    # ===== پاک کردن پیام لودینگ قبل از نمایش نتیجه =====
                     try:
                         await query.message.delete()
                     except Exception:
                         pass
 
-                    await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price)
+                    if is_limit_signal:
+                        # ===== سقف ۳ لیمیت هم‌زمان برای هر کاربر - جلوگیری از باز کردن =====
+                        # ===== بی‌رویه‌ی سفارش‌های معلق روی هر سطح Equal پیداشده =====
+                        MAX_PENDING_PER_USER = 3
+                        if count_active_pending_trades(user_id) >= MAX_PENDING_PER_USER:
+                            await context.bot.send_message(
+                                chat_id=user_id,
+                                text=f"⚠️ شما در حال حاضر {MAX_PENDING_PER_USER} لیمیت اوردر فعال دارید. لطفاً منتظر بمونید تا یکی از اونا لمس یا منقضی بشه.",
+                                reply_markup=user_keyboard(lang),
+                                parse_mode='Markdown'
+                            )
+                            use_signal(user_id)
+                            record_signal_time(user_id, timeframe)
+                            return
+
+                        # ===== سقف زمانی انقضای لیمیت: ۲۰ کندل از تایم‌فریم انتخابی =====
+                        # ===== بعد از این مدت اگه قیمت لمس نکرده باشه، لیمیت خودکار کنسل می‌شه =====
+                        TIMEFRAME_MINUTES = {
+                            "1min": 1, "5min": 5, "15min": 15,
+                            "1h": 60, "4h": 240, "1d": 1440
+                        }
+                        minutes_per_candle = TIMEFRAME_MINUTES.get(timeframe, 5)
+                        expiry_minutes = minutes_per_candle * 20
+                        expires_at = (get_tehran_time() + timedelta(minutes=expiry_minutes)).isoformat()
+
+                        trade_id = save_pending_trade(
+                            signal, user_id, style, strength,
+                            symbol=symbol, timeframe=timeframe, expires_at=expires_at
+                        )
+                        use_signal(user_id)
+                        record_signal_time(user_id, timeframe)
+
+                        await send_limit_signal(context.bot, user_id, trade_id, signal, analysis, timeframe, lang, symbol=symbol)
+                    else:
+                        # ===== مسیر قدیمی: سیگنال لحظه‌ای (برای سازگاری با استراتژی‌های آینده) =====
+                        live_price = await _run_in_signal_thread(get_current_price, symbol)
+                        if not live_price:
+                            live_price = df['Close'].iloc[-1]
+
+                        risk_distance = abs(signal['entry'] - signal['sl'])
+                        reward_distance = abs(signal['tp'] - signal['entry'])
+                        new_entry = round(float(live_price), 2)
+
+                        if signal['direction'] == 'BUY':
+                            signal['sl'] = round(new_entry - risk_distance, 2)
+                            signal['tp'] = round(new_entry + reward_distance, 2)
+                        else:
+                            signal['sl'] = round(new_entry + risk_distance, 2)
+                            signal['tp'] = round(new_entry - reward_distance, 2)
+                        signal['entry'] = new_entry
+
+                        trade_id = save_trade(signal, user_id, style, strength, symbol=symbol)
+                        use_signal(user_id)
+                        record_signal_time(user_id, timeframe)
+
+                        await send_signal(context.bot, user_id, trade_id, signal, analysis, df, timeframe, user_id, lang, symbol=symbol, current_price=live_price)
                 else:
                     try:
                         await query.message.delete()
@@ -1683,9 +1760,10 @@ def main():
         create_database()
 
         async def _post_init(application):
-            """بعد از راه‌اندازی کامل ربات، حلقه‌ی چک خودکار TP/SL رو در پس‌زمینه اجرا می‌کنه."""
-            from auto_tracker import auto_tracker_loop
+            """بعد از راه‌اندازی کامل ربات، حلقه‌های چک خودکار TP/SL و لیمیت اوردر رو در پس‌زمینه اجرا می‌کنه."""
+            from auto_tracker import auto_tracker_loop, pending_tracker_loop
             asyncio.create_task(auto_tracker_loop(application))
+            asyncio.create_task(pending_tracker_loop(application))
 
         app = Application.builder().token(TOKEN).post_init(_post_init).build()
 
