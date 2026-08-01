@@ -2,6 +2,7 @@
 # 📁 auto_tracker.py
 # 📌 وظیفه: بررسی خودکار معاملات باز (OPEN) بر اساس قیمت زنده،
 #          و ثبت خودکار نتیجه (TP/SL) + اطلاع‌رسانی به کاربر.
+#          + تعقیب لیمیت اوردرهای در انتظار (PENDING).
 # 📅 ساخته‌شده: 2026-07-17
 #
 # این به‌عنوان یه background task با asyncio اجرا می‌شه (نه یه
@@ -11,6 +12,8 @@
 
 import asyncio
 import logging
+from datetime import datetime
+import pytz
 from concurrent.futures import ThreadPoolExecutor
 
 from database import get_open_trades, update_result
@@ -119,4 +122,111 @@ async def auto_tracker_loop(application):
             await check_open_trades_once(application.bot)
         except Exception as e:
             logger.exception(f"خطا در چک خودکار TP/SL: {e}")
+        await asyncio.sleep(CHECK_INTERVAL_SECONDS)
+
+
+# ============================================================
+# 📌 تعقیب لیمیت اوردرهای در انتظار (PENDING)
+#
+# استراتژی equal_liquidity به‌جای سیگنال لحظه‌ای، یک سطح Equal High/Low
+# را به‌عنوان لیمیت اوردر برمی‌گرداند. این حلقه هر ۶۰ ثانیه بررسی می‌کند:
+#   1) آیا قیمت لحظه‌ای به سطح لیمیت رسیده؟ اگر بله -> معامله را از
+#      PENDING به OPEN تبدیل کن و به کاربر اطلاع بده (از این لحظه به
+#      بعد auto_tracker_loop معمولی، TP/SL آن را دنبال می‌کند).
+#   2) آیا سقف زمانی (expires_at) گذشته بدون این‌که لمس شود؟ اگر بله ->
+#      لیمیت را EXPIRED کن و به کاربر اطلاع بده.
+#
+# ⚠️ جهت سیگنال بعد از ثبت هرگز تغییر نمی‌کند - این حلقه فقط چک می‌کند
+# قیمت به سطح از قبل تعیین‌شده رسیده یا نه؛ هیچ‌وقت BUY/SELL یا
+# SL/TP را دوباره محاسبه یا عوض نمی‌کند.
+# ============================================================
+from database import get_pending_trades, activate_pending_trade, expire_pending_trade
+
+
+async def check_pending_trades_once(bot):
+    """یک بار همه‌ی لیمیت اوردرهای PENDING را با قیمت لحظه‌ای/انقضا مقایسه می‌کند."""
+    pending = get_pending_trades()
+    if not pending:
+        return
+
+    pending_by_symbol = {}
+    for trade in pending:
+        symbol = trade.get('symbol', 'XAU/USD')
+        pending_by_symbol.setdefault(symbol, []).append(trade)
+
+    now_utc = datetime.now(pytz.utc)
+
+    for symbol, symbol_trades in pending_by_symbol.items():
+        price = await _run_in_tracker_thread(get_current_price, symbol)
+
+        for trade in symbol_trades:
+            trade_id = trade['id']
+            user_id = trade['user_id']
+            direction = trade['direction']
+            entry = trade['entry']
+            sl = trade['sl']
+            tp = trade['tp']
+            expires_at = trade.get('expires_at')
+
+            # ===== چک انقضا (اولویت با انقضا اگه هر دو هم‌زمان درست باشن) =====
+            if expires_at:
+                try:
+                    expiry_dt = datetime.fromisoformat(expires_at)
+                    if expiry_dt.tzinfo is None:
+                        expiry_dt = pytz.utc.localize(expiry_dt)
+                    if now_utc >= expiry_dt:
+                        expire_pending_trade(trade_id)
+                        try:
+                            if user_id and user_id != 0:
+                                await bot.send_message(
+                                    chat_id=user_id,
+                                    text=f"⌛ لیمیت اوردر شماره {trade_id} ({symbol}) منقضی شد - قیمت به سطح {entry:.2f} نرسید.",
+                                    parse_mode='Markdown'
+                                )
+                        except Exception as e:
+                            logger.warning(f"اطلاع‌رسانی انقضای لیمیت به کاربر {user_id} ناموفق بود: {e}")
+                        continue
+                except (ValueError, TypeError):
+                    pass
+
+            if price is None:
+                continue
+
+            # ===== چک لمس شدن سطح لیمیت =====
+            touched = False
+            if direction == 'BUY' and price <= entry:
+                touched = True
+            elif direction == 'SELL' and price >= entry:
+                touched = True
+
+            if touched:
+                activate_pending_trade(trade_id)
+                try:
+                    if user_id and user_id != 0:
+                        emoji = "🟢" if direction == "BUY" else "🔴"
+                        await bot.send_message(
+                            chat_id=user_id,
+                            text=(
+                                f"{emoji} **معامله‌ی شماره {trade_id} ({symbol}) باز شد!**\n\n"
+                                f"قیمت به سطح لیمیت {entry:.2f} رسید.\n"
+                                f"📍 Entry: {entry:.2f}\n🛑 SL: {sl:.2f}\n🎯 TP: {tp:.2f}\n\n"
+                                f"از این لحظه نتیجه‌ی این معامله به‌صورت خودکار دنبال می‌شود."
+                            ),
+                            parse_mode='Markdown'
+                        )
+                except Exception as e:
+                    logger.warning(f"اطلاع‌رسانی فعال‌شدن لیمیت به کاربر {user_id} ناموفق بود: {e}")
+
+
+async def pending_tracker_loop(application):
+    """
+    حلقه‌ی بی‌نهایت که هر CHECK_INTERVAL_SECONDS ثانیه لیمیت اوردرهای
+    در انتظار را بررسی می‌کند (لمس شدن سطح یا انقضای زمانی).
+    """
+    logger.info("🔄 چک خودکار لیمیت اوردرها شروع شد.")
+    while True:
+        try:
+            await check_pending_trades_once(application.bot)
+        except Exception as e:
+            logger.exception(f"خطا در چک خودکار لیمیت اوردرها: {e}")
         await asyncio.sleep(CHECK_INTERVAL_SECONDS)
