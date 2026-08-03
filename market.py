@@ -278,20 +278,21 @@ def get_historical_candles(start_date, end_date, timeframe="1h", symbol="XAU/USD
 
 
 def get_current_price(symbol="XAU/USD"):
-    # ===== منبع 1: GoldAPI (فقط برای طلا کار می‌کنه) =====
-    if symbol == "XAU/USD":
-        try:
-            url = "https://api.gold-api.com/price/XAU"
-            response = requests.get(url, timeout=10)
-            data = response.json()
-            if "price" in data:
-                price = float(data["price"])
-                print(f"✅ GoldAPI: {price}")
-                return round(price, 2)
-        except Exception as e:
-            print(f"❌ خطای GoldAPI: {e}")
+    """
+    ⚠️ رفع ناهماهنگی قیمت: قبلاً برای طلا اول GoldAPI چک می‌شد و Twelve
+    Data فقط fallback بود. اما get_gold_candles (که Entry/SL/TP سیگنال
+    از روش محاسبه می‌شه) همیشه از Twelve Data می‌گیره. چون GoldAPI و
+    Twelve Data قیمت طلا رو با اختلاف چند دلاری گزارش می‌کنن (طبیعی بین
+    ارائه‌دهنده‌های مختلف قیمت spot)، قیمتی که کاربر با دکمه‌ی "قیمت
+    لحظه‌ای" می‌دید با سطحی که سیگنال روش ساخته شده هم‌خونی نداشت -
+    باعث می‌شد سیگنال نسبت به بازار واقعی جابه‌جا/اشتباه به نظر برسه.
 
-    # ===== منبع 2: Twelve Data (برای همه‌ی نمادها) =====
+    ✅ راه‌حل: حالا همیشه اول Twelve Data چک می‌شه (همون منبع کندل‌ها) -
+    تا قیمت لحظه‌ای، چک TP/SL خودکار، و محاسبه‌ی سیگنال همه دقیقاً از
+    یک منبع واحد باشن. GoldAPI فقط زمانی استفاده می‌شه که Twelve Data
+    (به هر دلیلی، مثل قطعی یا محدودیت نرخ) جواب نده.
+    """
+    # ===== منبع 1 (اصلی): Twelve Data - همون منبعی که کندل‌های سیگنال ازش میاد =====
     if TWELVE_DATA_KEY:
         try:
             url = "https://api.twelvedata.com/price"
@@ -309,5 +310,18 @@ def get_current_price(symbol="XAU/USD"):
                 return round(price, 2)
         except Exception as e:
             print(f"❌ خطای Twelve Data: {e}")
+
+    # ===== منبع 2 (fallback): GoldAPI - فقط وقتی Twelve Data در دسترس نبود =====
+    if symbol == "XAU/USD":
+        try:
+            url = "https://api.gold-api.com/price/XAU"
+            response = requests.get(url, timeout=10)
+            data = response.json()
+            if "price" in data:
+                price = float(data["price"])
+                print(f"⚠️ GoldAPI (fallback, ممکنه چند دلار با Twelve Data فرق داشته باشه): {price}")
+                return round(price, 2)
+        except Exception as e:
+            print(f"❌ خطای GoldAPI: {e}")
 
     return None
